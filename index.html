@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>CBT 만들기 & 풀기 — 일상방 31 (v8 · Firebase 동기화)</title>
+<title>CBT 만들기 & 풀기 — 일상방 31 (v8 · Firebase)</title>
 <style>
   :root{--gap:12px;--radius:12px}
   body{font-family:system-ui,Apple SD Gothic Neo,Segoe UI,Arial;margin:0;background:#f7f7fb;color:#111}
@@ -36,7 +36,8 @@
   table{width:100%;border-collapse:collapse}
   th,td{border:1px solid #eee;padding:8px;text-align:left;font-size:14px}
   .note-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-  .authbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .authbar{display:flex;gap:8px;align-items:center}
+  .dim{opacity:.5}
 </style>
 </head>
 <body>
@@ -53,9 +54,10 @@
 
     <div class="authbar">
       <span class="pill" id="noteBadge">오답노트 0 · 정답노트 0</span>
-      <span class="meta" id="userInfo">로그인 필요</span>
-      <button class="btn" id="btnSignIn">Google 로그인</button>
-      <button class="btn" id="btnSignOut" style="display:none">로그아웃</button>
+      <span class="meta" id="syncBadge">오프라인</span>
+      <button class="btn" id="loginBtn">Google 로그인</button>
+      <button class="btn hidden" id="logoutBtn">로그아웃</button>
+      <span class="meta" id="whoAmI"></span>
     </div>
   </header>
 
@@ -86,7 +88,7 @@
       <div style="flex:1"></div>
       <input type="file" id="file" class="hidden" accept=".json">
       <button class="btn" id="loadBtn">JSON 불러오기</button>
-      <button class="btn" id="saveBtn">JSON 내보내기</button>
+      <button class="btn" id="saveBtn">JSON 내보내기(백업)</button>
       <button class="btn" id="startBtn">퀴즈 시작</button>
     </div>
 
@@ -112,7 +114,7 @@
 
     <h3 style="margin:14px 0 8px">현재 문제 리스트</h3>
     <div class="list" id="listBox"></div>
-    <p class="meta">자동 저장/동기화: 로그인 시 Firestore, 미로그인 시 이 브라우저에만 저장.</p>
+    <p class="meta">※ 로그인한 계정의 클라우드(Firestore)에 자동 저장·동기화됩니다. (백업용으로 JSON 내보내기 가능)</p>
   </section>
 
   <!-- 퀴즈 -->
@@ -202,8 +204,7 @@
     <hr style="margin:16px 0;border:0;border-top:1px solid #eee">
 
     <h4>옵션 B) CSV 한 파일로 가져오기 (추천)</h4>
-    <p class="meta">CSV 첫 줄(헤더): <code>문제번호,과목,단원,문제,보기1,보기2,보기3,보기4,보기5,답,해설</code><br>
-    필수: 과목/단원/문제/보기1/보기2/답(숫자 1~5). 쉼표가 들어가면 "따옴표"로 감싸줘.</p>
+    <p class="meta">CSV 첫 줄(헤더): <code>문제번호,과목,단원,문제,보기1,보기2,보기3,보기4,보기5,답,해설</code></p>
     <div class="row">
       <div class="col">
         <label>CSV 파일(.csv/.tsv/.txt)</label>
@@ -216,643 +217,502 @@
   </section>
 </div>
 
-<!-- Firebase (모듈) -->
+<!-- Firebase SDK (CDN, 모듈 방식 v9+) -->
 <script type="module">
-  /***** 1) Firebase 로드 & 초기화 *****/
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-  import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+/* ======== 1) Firebase 초기화 ======== */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
 
-  // 👉 여기에 본인 프로젝트의 설정을 그대로 넣어두었어.
-  const firebaseConfig = {
-    apiKey: "AIzaSyCIxu4AvEDM3ajVqUp-1xVu3r_cmws5tzA",
-    authDomain: "psychology-cbt.firebaseapp.com",
-    projectId: "psychology-cbt",
-    storageBucket: "psychology-cbt.firebasestorage.app",
-    messagingSenderId: "721227780091",
-    appId: "1:721227780091:web:07430b92610e553075455e"
-  };
+/* 콘솔에서 받은 설정 (네 프로젝트 값) */
+const firebaseConfig = {
+  apiKey: "AIzaSyCIxu4AvEDM3ajVqUp-1xVu3r_cmws5tzA",
+  authDomain: "psychology-cbt.firebaseapp.com",
+  projectId: "psychology-cbt",
+  storageBucket: "psychology-cbt.firebasestorage.app",
+  messagingSenderId: "721227780091",
+  appId: "1:721227780091:web:07430b92610e553075455e"
+};
 
-  const app = initializeApp(firebaseConfig);
-  const auth = getAuth(app);
-  const db   = getFirestore(app);
-  const provider = new GoogleAuthProvider();
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
 
-  /***** 2) 기존 앱 변수/함수들 (동기화 훅만 바꿈) *****/
-  const $ = id=>document.getElementById(id);
-  let data = JSON.parse(localStorage.getItem("cbt_data")||"[]");
-  let idx=0, correct=0, wrong=0;
-  let filteredIdxs=[];
-  let attempts   = JSON.parse(localStorage.getItem("cbt_attempts")||"{}");
-  let wrongSet   = JSON.parse(localStorage.getItem("cbt_wrongset")||"{}");
-  let correctSet = JSON.parse(localStorage.getItem("cbt_correctset")||"{}");
+/* 오프라인 캐시 (오프라인에서도 작동, 재연결 시 자동 동기화) */
+enableIndexedDbPersistence(db).catch(()=>{ /* 이미 활성화된 경우 무시 */ });
 
-  // 빌더용
-  let buildFilteredIdxs = [];
-  let buildSelected = new Set();
+/* ======== 2) 앱 상태 ======== */
+const $ = id=>document.getElementById(id);
+let user = null;
 
-  function saveLocal(){
-    localStorage.setItem("cbt_data", JSON.stringify(data));
-    localStorage.setItem("cbt_attempts", JSON.stringify(attempts));
-    localStorage.setItem("cbt_wrongset", JSON.stringify(wrongSet));
-    localStorage.setItem("cbt_correctset", JSON.stringify(correctSet));
+/* 원래 v7의 상태 변수들 */
+let data = [];                         // 문항 배열
+let idx=0, correct=0, wrong=0;
+let filteredIdxs=[];
+let attempts = {};                     // {qid: {lastState, lastChoice}}
+let wrongSet = {};                     // {qid:true}
+let correctSet = {};                   // {qid:true}
+
+/* 빌더 전용 */
+let buildFilteredIdxs = [];
+let buildSelected = new Set();
+
+/* 로컬 백업 (문제 많아도 빠르게 로드) */
+function backupSave(){
+  localStorage.setItem("cbt_backup", JSON.stringify({data, attempts, wrongSet, correctSet}));
+}
+function backupLoad(){
+  try{
+    const b = JSON.parse(localStorage.getItem("cbt_backup")||"null");
+    if(b){ data=b.data||[]; attempts=b.attempts||{}; wrongSet=b.wrongSet||{}; correctSet=b.correctSet||{}; }
+  }catch{}
+}
+
+/* ======== 3) 클라우드 저장/로드 ======== */
+/* 저장 위치: users/{uid}/bundle  (한 문서에 묶음 저장·간단)
+   대량(수천 문항)까지 쓰면 1MB 제한에 걸릴 수 있어.
+   그때는 '문항당 1문서' 구조로 바꾸자. (지금은 간단 버전) */
+function cloudDocRef(){
+  if(!user) return null;
+  return doc(db, "users", user.uid, "app", "bundle");
+}
+
+let saveTimer = null;
+function saveCloud(debounceMs=800){
+  if(!user) return;
+  if(saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    const payload = { data, attempts, wrongSet, correctSet, ts: Date.now() };
+    try{
+      await setDoc(cloudDocRef(), payload, { merge:true });
+      $("syncBadge").textContent = "동기화 완료";
+      $("syncBadge").classList.remove("dim");
+      backupSave();
+    }catch(e){
+      $("syncBadge").textContent = "저장 실패(오프라인?)";
+      $("syncBadge").classList.add("dim");
+    }
+  }, debounceMs);
+}
+
+async function loadCloud(){
+  if(!user) return;
+  $("syncBadge").textContent = "불러오는 중…";
+  $("syncBadge").classList.add("dim");
+  try{
+    const snap = await getDoc(cloudDocRef());
+    if(snap.exists()){
+      const b = snap.data();
+      data = b.data||[]; attempts = b.attempts||{}; wrongSet = b.wrongSet||{}; correctSet = b.correctSet||{};
+    }else{
+      // 최초 사용자: 빈 상태를 만들어 저장
+      await setDoc(cloudDocRef(), {data:[], attempts:{}, wrongSet:{}, correctSet:{}, ts: Date.now()});
+      data=[]; attempts={}; wrongSet={}; correctSet={};
+    }
+    $("syncBadge").textContent = "동기화됨";
+    $("syncBadge").classList.remove("dim");
+    backupSave();
+  }catch(e){
+    $("syncBadge").textContent = "오프라인(백업 사용)";
+    $("syncBadge").classList.add("dim");
+    backupLoad();
   }
-  function noteCounts(){ return {w:Object.keys(wrongSet).length, c:Object.keys(correctSet).length}; }
-  function refreshNoteBadge(){ const {w,c}=noteCounts(); const el=$("noteBadge"); if(el) el.textContent = `오답노트 ${w} · 정답노트 ${c}`; }
-  function fillSelect(sel, arr){ if(!sel) return; sel.innerHTML = arr.map(v=>`<option value="${v}">${v}</option>`).join(""); }
-  function getUnitsForSubject(subject){
-    const set = new Set();
-    data.forEach(q=>{ if(subject==="(전체)" || q.subject===subject) set.add(q.unit); });
-    return ["(전체)", ...Array.from(set).sort()];
-  }
-  function updateUnitOptions(subjId, unitId){
-    const sEl = $(subjId); const uEl = $(unitId);
-    if(!sEl || !uEl) return;
-    const s = sEl.value || "(전체)";
-    fillSelect(uEl, getUnitsForSubject(s));
-  }
+}
 
-  // UI 초기화(원래 v7 로직 그대로)
+/* ======== 4) 인증 UI ======== */
+$("loginBtn").onclick = async () => {
+  try{
+    await signInWithPopup(auth, new GoogleAuthProvider());
+  }catch(e){
+    alert("로그인 실패: " + (e?.message || e));
+  }
+};
+$("logoutBtn").onclick = ()=> signOut(auth);
+
+onAuthStateChanged(auth, async (u)=>{
+  user = u || null;
+  if(user){
+    $("loginBtn").classList.add("hidden");
+    $("logoutBtn").classList.remove("hidden");
+    $("whoAmI").textContent = user.email || user.displayName || user.uid;
+    await loadCloud();
+    initAfterDataLoad();   // 데이터 로드 후 UI 초기화
+  }else{
+    $("loginBtn").classList.remove("hidden");
+    $("logoutBtn").classList.add("hidden");
+    $("whoAmI").textContent = "";
+    // 로그인 전에는 화면은 보이되 버튼들 동작 막기
+    disableAppUntilLogin(true);
+  }
+});
+
+/* 로그인 전 차단(읽기만 허용 느낌) */
+function disableAppUntilLogin(lock){
+  const needsAuth = document.querySelectorAll("#buildSec .btn, #quizSec .btn, #reviewSec .btn, #importSec .btn, input, textarea, select");
+  needsAuth.forEach(el=>{
+    if(lock){
+      el.setAttribute("disabled","disabled");
+      el.classList.add("dim");
+    }else{
+      el.removeAttribute("disabled");
+      el.classList.remove("dim");
+    }
+  });
+  // 로그인 버튼은 항상 가능
+  $("loginBtn").removeAttribute("disabled");
+}
+
+/* ======== 5) 기존 v7 로직 (저장만 클라우드로 교체) ======== */
+function noteCounts(){ return {w:Object.keys(wrongSet).length, c:Object.keys(correctSet).length}; }
+function refreshNoteBadge(){ const {w,c}=noteCounts(); const el=$("noteBadge"); if(el) el.textContent = `오답노트 ${w} · 정답노트 ${c}`; }
+
+function initAfterDataLoad(){
+  disableAppUntilLogin(false);
   buildPrepareFiltered();
   renderList();
   refreshAllFilters();
   refreshNoteBadge();
-  $("filterSubject").onchange = ()=> updateUnitOptions("filterSubject","filterUnit");
-  $("revSubject").onchange    = ()=> updateUnitOptions("revSubject","revUnit");
-  $("buildFilterSubject").onchange = ()=> updateUnitOptions("buildFilterSubject","buildFilterUnit");
-  ["onlyWrong","onlyCorrect"].forEach(id=>{ const el=$(id); if(el){ el.onchange = ()=>{ prepareFiltered(); startQuiz(); }; }});
-  $("tabBuild").onclick = ()=>show("build");
-  $("tabQuiz").onclick  = ()=>{ show("quiz"); prepareFiltered(); startQuiz(); };
-  $("tabReview").onclick= ()=>show("review");
-  $("tabImport").onclick= ()=>show("import");
+  // 이벤트 핸들러들(중복 등록 방지용 once 패턴)
+}
 
-  function show(which){
-    const map={build:"buildSec",quiz:"quizSec",review:"reviewSec",import:"importSec"};
-    Object.values(map).forEach(id=>$(id).classList.add("hidden"));
-    $(map[which]).classList.remove("hidden");
-    ["tabBuild","tabQuiz","tabReview","tabImport"].forEach(t=>$(t).classList.remove("active"));
-    if(which==="build") $("tabBuild").classList.add("active");
-    if(which==="quiz")  $("tabQuiz").classList.add("active");
-    if(which==="review")$("tabReview").classList.add("active");
-    if(which==="import")$("tabImport").classList.add("active");
+/* 탭 전환 */
+$("tabBuild").onclick = ()=>show("build");
+$("tabQuiz").onclick  = ()=>{ show("quiz"); prepareFiltered(); startQuiz(); };
+$("tabReview").onclick= ()=>show("review");
+$("tabImport").onclick= ()=>show("import");
+function show(which){
+  const map={build:"buildSec",quiz:"quizSec",review:"reviewSec",import:"importSec"};
+  Object.values(map).forEach(id=>$(id).classList.add("hidden"));
+  $(map[which]).classList.remove("hidden");
+  ["tabBuild","tabQuiz","tabReview","tabImport"].forEach(t=>$(t).classList.remove("active"));
+  if(which==="build") $("tabBuild").classList.add("active");
+  if(which==="quiz")  $("tabQuiz").classList.add("active");
+  if(which==="review")$("tabReview").classList.add("active");
+  if(which==="import")$("tabImport").classList.add("active");
+}
+
+/* 빌더 */
+$("clearBtn").onclick=()=>["subject","unit","question","c1","c2","c3","c4","c5","explain"].forEach(id=>$(id).value="");
+$("addBtn").onclick=()=>{
+  if(!user){ alert("로그인 후 이용해줘!"); return; }
+  const subject = $("subject").value.trim()||"미지정";
+  const unit = $("unit").value.trim()||"일반";
+  const question = $("question").value.trim();
+  const choices = ["c1","c2","c3","c4","c5"].map(id=>($(id).value||"").trim()).filter(v=>v);
+  const ai = parseInt($("answerIndex").value,10)-1;
+  const explanation = $("explain").value.trim();
+  if(!question || choices.length<2 || isNaN(ai) || ai<0 || ai>=choices.length){
+    alert("문항/보기(2개 이상)/정답 번호를 확인해줘."); return;
   }
+  data.push({ id: genId(), subject, unit, question, choices, answerIndex: ai, explanation });
+  buildPrepareFiltered(); renderList(); refreshAllFilters();
+  $("clearBtn").click();
+  saveCloud();  // <-- 클라우드 저장
+};
 
-  $("clearBtn").onclick=()=>["subject","unit","question","c1","c2","c3","c4","c5","explain"].forEach(id=>$(id).value="");
-  $("addBtn").onclick=()=>{
-    const subject = $("subject").value.trim()||"미지정";
-    const unit = $("unit").value.trim()||"일반";
-    const question = $("question").value.trim();
-    const choices = ["c1","c2","c3","c4","c5"].map(id=>($(id).value||"").trim()).filter(v=>v);
-    const ai = parseInt($("answerIndex").value,10)-1;
-    const explanation = $("explain").value.trim();
-    if(!question || choices.length<2 || isNaN(ai) || ai<0 || ai>=choices.length){
-      alert("문항/보기(2개 이상)/정답 번호를 확인해줘."); return;
-    }
-    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ai, explanation });
-    saveAll(); // ← 로컬+클라우드
-    buildPrepareFiltered();
-    renderList();
-    $("clearBtn").click();
-    refreshAllFilters();
-  };
+$("saveBtn").onclick=()=>{
+  const blob = new Blob([JSON.stringify({data,attempts,wrongSet,correctSet}, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "cbt_backup.json";
+  a.click();
+};
 
-  $("saveBtn").onclick=()=>{
-    const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "questions.json";
-    a.click();
-  };
-
-  $("loadBtn").onclick=()=>$("file").click();
-  $("file").onchange=e=>{
-    const f=e.target.files[0]; if(!f) return;
-    f.text().then(t=>{
-      try{
-        const incoming = JSON.parse(t);
-        if(!Array.isArray(incoming)) throw new Error("JSON 최상위는 배열이어야 합니다.");
-        incoming.forEach(q=>{ q.id = genId(); });
-        data = data.concat(incoming);
-        saveAll();
-        buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
-        alert("불러오기 완료!");
-      }catch(err){ alert("JSON 형식 오류: "+err.message); }
-    });
-  };
-
-  $("startBtn").onclick=()=>{ if(data.length===0){ alert("문제가 없음!"); return; } prepareFiltered(); startQuiz(); show("quiz"); };
-  $("backToBuild").onclick=()=>show("build");
-
-  function renderList(){
-    const box=$("listBox");
-    const idxs = (buildFilteredIdxs.length ? buildFilteredIdxs : data.map((_,i)=>i));
-    if(data.length===0 || idxs.length===0){
-      box.innerHTML = "<div class='meta'>아직 없음. 문제를 추가해줘.</div>";
-      $("buildCount").textContent = 0;
-      return;
-    }
-    box.innerHTML = idxs.map(i=>{
-      const q = data[i];
-      const checked = buildSelected.has(q.id) ? "checked" : "";
-      return `
-        <div class="item">
-          <label class="meta" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <input type="checkbox" class="sel" data-id="${q.id}" ${checked}>
-            <span>#${q.id} · ${q.subject} / ${q.unit}</span>
-          </label>
-          <div>${q.question}</div>
-          <div class="meta">정답: ${q.answerIndex+1} | 보기: ${q.choices.join(" / ")}</div>
-          <div class="row" style="margin-top:6px">
-            <button class="btn danger" onclick="delQ(${q.id})">개별 삭제</button>
-          </div>
-        </div>`;
-    }).join("");
-
-    Array.from(box.querySelectorAll(".sel")).forEach(chk=>{
-      chk.onchange = (e)=>{
-        const id = parseInt(e.target.getAttribute("data-id"),10);
-        if(e.target.checked) buildSelected.add(id);
-        else buildSelected.delete(id);
-      };
-    });
-    $("buildCount").textContent = idxs.length;
-  }
-
-  window.delQ = (id)=>{
-    data = data.filter(x=>x.id!==id);
-    if(buildSelected.has(id)) buildSelected.delete(id);
-    if(attempts[id]) delete attempts[id];
-    delete wrongSet[id];
-    delete correctSet[id];
-    saveAll();
-    buildPrepareFiltered();
-    renderList(); refreshAllFilters(); refreshNoteBadge();
-  };
-
-  function genId(){
-    const used = new Set(data.map(q=>q.id));
-    let i = 1; while(used.has(i)) i++; return i;
-  }
-
-  function buildPrepareFiltered(){
-    const s = $("buildFilterSubject") ? $("buildFilterSubject").value || "(전체)" : "(전체)";
-    const u = $("buildFilterUnit") ? $("buildFilterUnit").value || "(전체)" : "(전체)";
-    buildFilteredIdxs = data
-      .map((q,i)=>({q,i}))
-      .filter(({q})=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
-      .map(({i})=>i);
-    if(buildFilteredIdxs.length===0) buildFilteredIdxs = data.map((_,i)=>i);
-  }
-
-  $("buildApplyFilter").onclick = ()=>{ buildSelected.clear(); buildPrepareFiltered(); renderList(); };
-  $("buildClearFilter").onclick = ()=>{
-    if($("buildFilterSubject")) $("buildFilterSubject").selectedIndex = 0;
-    updateUnitOptions("buildFilterSubject","buildFilterUnit");
-    if($("buildFilterUnit")) $("buildFilterUnit").selectedIndex = 0;
-    buildSelected.clear();
-    buildPrepareFiltered();
-    renderList();
-  };
-  $("buildSelectAll").onclick   = ()=>{
-    const box = $("listBox"); const checks = box.querySelectorAll(".sel");
-    checks.forEach(ch=>{ ch.checked = true; buildSelected.add(parseInt(ch.getAttribute("data-id"),10)); });
-  };
-  $("buildSelectNone").onclick  = ()=>{
-    const box = $("listBox"); const checks = box.querySelectorAll(".sel");
-    checks.forEach(ch=>{ ch.checked = false; buildSelected.delete(parseInt(ch.getAttribute("data-id"),10)); });
-  };
-  $("buildSelectInvert").onclick= ()=>{
-    const box = $("listBox"); const checks = box.querySelectorAll(".sel");
-    checks.forEach(ch=>{
-      const id = parseInt(ch.getAttribute("data-id"),10);
-      const now = !ch.checked; ch.checked = now;
-      if(now) buildSelected.add(id); else buildSelected.delete(id);
-    });
-  };
-  $("buildDeleteSelected").onclick = ()=>{
-    const ids = Array.from(buildSelected);
-    if(ids.length===0){ alert("선택된 문제가 없어!"); return; }
-    if(!confirm(`${ids.length}문항을 삭제할까요? (되돌릴 수 없음)`)) return;
-    const remove = new Set(ids);
-    data = data.filter(q=>!remove.has(q.id));
-    ids.forEach(id=>{ if(attempts[id]) delete attempts[id]; delete wrongSet[id]; delete correctSet[id]; });
-    buildSelected.clear();
-    saveAll();
-    refreshAllFilters(); buildPrepareFiltered(); renderList(); refreshNoteBadge();
-    alert("삭제 완료!");
-  };
-
-  function refreshAllFilters(){
-    const subj = Array.from(new Set(data.map(q=>q.subject))).sort();
-    const unit = Array.from(new Set(data.map(q=>q.unit))).sort();
-    fillSelect($("filterSubject"), ["(전체)", ...subj]);
-    fillSelect($("filterUnit"), ["(전체)", ...unit]);
-    fillSelect($("revSubject"), ["(전체)", ...subj]);
-    fillSelect($("revUnit"), ["(전체)", ...unit]);
-    updateUnitOptions("filterSubject","filterUnit");
-    updateUnitOptions("revSubject","revUnit");
-    if($("buildFilterSubject")) fillSelect($("buildFilterSubject"), ["(전체)", ...subj]);
-    if($("buildFilterUnit")) fillSelect($("buildFilterUnit"), ["(전체)", ...unit]);
-    updateUnitOptions("buildFilterSubject","buildFilterUnit");
-  }
-
-  function prepareFiltered(){
-    const s = $("filterSubject").value;
-    const u = $("filterUnit").value;
-    const onlyWrong = $("onlyWrong") && $("onlyWrong").checked;
-    const onlyCorrect = $("onlyCorrect") && $("onlyCorrect").checked;
-
-    filteredIdxs = data
-      .map((q,i)=>({q,i}))
-      .filter(({q})=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
-      .filter(({q})=> {
-        if(onlyWrong && onlyCorrect) return !!wrongSet[q.id] || !!correctSet[q.id];
-        if(onlyWrong) return !!wrongSet[q.id];
-        if(onlyCorrect) return !!correctSet[q.id];
-        return true;
-      })
-      .map(({i})=>i);
-
-    if(!onlyWrong && !onlyCorrect && filteredIdxs.length===0){
-      filteredIdxs = data.map((_,i)=>i);
-    }
-  }
-
-  $("applyFilter").onclick=()=>{ prepareFiltered(); startQuiz(); };
-  $("clearFilter").onclick = () => {
-    $("filterSubject").selectedIndex = 0;
-    updateUnitOptions("filterSubject","filterUnit");
-    $("filterUnit").selectedIndex = 0;
-    if($("onlyWrong")) $("onlyWrong").checked = false;
-    if($("onlyCorrect")) $("onlyCorrect").checked = false;
-    prepareFiltered();
-    startQuiz();
-  };
-
-  function startQuiz(){
-    idx=0; correct=0; wrong=0;
-    if ($("showAll") && $("showAll").checked) {
-      setAllModeUI(true);  renderQuizAll();
-    } else {
-      setAllModeUI(false); renderQuiz();
-    }
-  }
-
-  function renderQuiz(){
-    const total = filteredIdxs.length;
-    $("idx").textContent = total? idx+1:0;
-    $("total").textContent = total;
-    $("good").textContent = correct;
-    $("bad").textContent = wrong;
-    $("bar").style.width = (total? (idx/total*100):0) + "%";
-    if(total===0){ $("qtext").textContent="해당 필터에 문제가 없어요."; $("choices").innerHTML=""; $("exp").textContent=""; return; }
-    const q = data[filteredIdxs[idx]];
-    $("subjectNow").textContent = `${q.subject} / ${q.unit}`;
-    $("qtext").textContent = q.id+". "+q.question;
-    $("exp").textContent = "";
-    $("choices").innerHTML = q.choices.map((c,i)=>`<button onclick="choose(${i})">${i+1}. ${c}</button>`).join("");
-    $("prevBtn").disabled = idx===0;
-    $("nextBtn").textContent = (idx===total-1) ? "결과" : "다음";
-  }
-
-  function setAllModeUI(on){
-    $("prevBtn").style.display = on ? "none" : "";
-    $("nextBtn").style.display = on ? "none" : "";
-  }
-
-  function renderQuizAll(){
-    const total = filteredIdxs.length;
-    $("idx").textContent = 0;
-    $("total").textContent = total;
-    $("good").textContent = correct;
-    $("bad").textContent = wrong;
-    $("bar").style.width = "0%";
-    if(total===0){
-      $("qtext").textContent="해당 필터에 문제가 없어요.";
-      $("choices").innerHTML=""; $("exp").textContent="";
-      return;
-    }
-    $("subjectNow").textContent = "(전체 보기 모드) 선택된 문항 " + total + "개";
-    $("qtext").textContent = "아래에서 바로 풀어봐!";
-    $("exp").textContent = "";
-
-    const html = filteredIdxs.map((di, k)=>{
-      const q = data[di];
-      const buttons = q.choices.map((c,i)=>`
-        <button onclick="chooseAll(${k}, ${i})">${i+1}. ${c}</button>
-      `).join("");
-      return `
-        <div class="item" id="qblock_${k}">
-          <div class="meta">#${q.id} · ${q.subject} / ${q.unit}</div>
-          <div style="font-weight:600;margin:6px 0">${q.question}</div>
-          <div class="choices" id="choices_all_${k}">${buttons}</div>
-          <p class="meta" id="exp_all_${k}" style="margin-top:6px"></p>
-        </div>
-      `;
-    }).join("");
-    $("choices").innerHTML = html;
-  }
-
-  function recordResult(q, ok, choiceIndex){
-    attempts[q.id] = { lastState: ok?"correct":"wrong", lastChoice: choiceIndex };
-    if(ok){ delete wrongSet[q.id]; correctSet[q.id] = true; }
-    else { wrongSet[q.id] = true; delete correctSet[q.id]; }
-    refreshNoteBadge();
-    saveAll(); // 결과도 즉시 동기화
-  }
-
-  window.chooseAll = (k, i)=>{
-    const di = filteredIdxs[k];
-    const q = data[di];
-    const choicesBox = document.getElementById("choices_all_"+k);
-    if(!choicesBox) return;
-    if(Array.from(choicesBox.children).some(b=>b.disabled)) return;
-
-    Array.from(choicesBox.children).forEach((b,j)=>{
-      b.disabled = true;
-      if(j===q.answerIndex) b.classList.add("correct");
-      if(j===i && i!==q.answerIndex) b.classList.add("wrong");
-    });
-    const ok = (i===q.answerIndex);
-    document.getElementById("exp_all_"+k).textContent =
-      (ok? "정답! " : "오답. 정답은 " + (q.answerIndex+1) + "번. ") + (q.explanation||"");
-    if(ok) correct++; else wrong++;
-    $("good").textContent = correct; $("bad").textContent = wrong;
-    recordResult(q, ok, i);
-  };
-
-  window.choose = (i)=>{
-    const q = data[filteredIdxs[idx]];
-    [...$("choices").children].forEach((b,j)=>{
-      b.disabled = true;
-      if(j===q.answerIndex) b.classList.add("correct");
-      if(j===i && i!==q.answerIndex) b.classList.add("wrong");
-    });
-    const ok = (i===q.answerIndex);
-    $("exp").textContent = (ok? "정답! ":"오답. 정답은 "+(q.answerIndex+1)+"번. ") + (q.explanation||"");
-    if(ok) correct++; else wrong++;
-    $("good").textContent = correct; $("bad").textContent = wrong;
-    recordResult(q, ok, i);
-  };
-
-  $("prevBtn").onclick=()=>{ if(idx>0){ idx--; renderQuiz(); } };
-  $("nextBtn").onclick=()=>{ const total=filteredIdxs.length; if(idx<total-1){ idx++; renderQuiz(); } else { alert(`끝! 정답 ${correct}, 오답 ${wrong}`); } };
-
-  $("revApply").onclick=()=>renderReview();
-  $("exportWrong").onclick=()=>exportByState("wrong");
-  $("exportCorrect").onclick=()=>exportByState("correct");
-  $("exportWrongSet").onclick=()=>exportSet("wrong");
-  $("exportCorrectSet").onclick=()=>exportSet("correct");
-  $("clearWrongSet").onclick=()=>{ if(confirm("오답노트를 모두 비울까요?")){ wrongSet={}; saveAll(); refreshNoteBadge(); alert("오답노트 초기화 완료"); } };
-  $("clearCorrectSet").onclick=()=>{ if(confirm("정답노트를 모두 비울까요?")){ correctSet={}; saveAll(); refreshNoteBadge(); alert("정답노트 초기화 완료"); } };
-
-  function renderReview(){
-    const s = $("revSubject").value;
-    const u = $("revUnit").value;
-    const st = $("revState").value;
-    const rows = data.filter(q=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
-      .map(q=>{
-        const att = attempts[q.id];
-        const state = att?.lastState || "-";
-        const my = att?.lastChoice!=null ? (q.choices[att.lastChoice]||"-") : "-";
-        const ans = q.choices[q.answerIndex]||"-";
-        return {q, state, my, ans};
-      })
-      .filter(r=> st==="all" ? true : r.state===st);
-
-    $("revBody").innerHTML = rows.map((r,i)=>`<tr>
-      <td>${i+1}</td>
-      <td>${r.q.subject}</td>
-      <td>${r.q.unit}</td>
-      <td>${r.q.question}</td>
-      <td>${r.my}</td>
-      <td>${r.ans}</td>
-      <td>${r.state}</td>
-    </tr>`).join("");
-  }
-
-  function exportByState(state){
-    const out = data.filter(q=>{ const st = attempts[q.id]?.lastState; return state==="all"? true : st===state; });
-    const blob = new Blob([JSON.stringify(out, null, 2)], {type:"application/json"});
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = state+"_questions_recent.json";
-    a.click();
-  }
-
-  function exportSet(which){
-    const ids = which==="wrong" ? wrongSet : correctSet;
-    const out = data.filter(q=> !!ids[q.id]);
-    const blob = new Blob([JSON.stringify(out, null, 2)], {type:"application/json"});
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = which+"_note_accumulated.json";
-    a.click();
-  }
-
-  $("runImport").onclick=async()=>{
-    const fq = $("impQ").files[0];
-    const fa = $("impA").files[0];
-    const fe = $("impE").files[0];
-    if(!fq || !fa){ alert("문제 파일과 정답 파일은 필수!"); return; }
-    const [tq, ta, te] = await Promise.all([fq.text(), fa.text(), fe?fe.text():Promise.resolve("")]);
-    const qLines = tq.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-    const aLines = ta.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-    const eLines = te.split(/\r?\n/).map(s=>s.trim());
-    const N = Math.min(qLines.length, aLines.length);
-    let added=0;
-    for(let i=0;i<N;i++){
-      const parts = qLines[i].split("|").map(s=>s.trim());
-      const subject = parts[0]||"미지정";
-      const unit = parts[1]||"일반";
-      const question = parts[2]||"";
-      const choices = parts.slice(3).filter(Boolean);
-      const ansIdx = parseInt(aLines[i],10) - 1;
-      const explanation = eLines[i]||"";
-      if(!question || choices.length<2 || isNaN(ansIdx) || ansIdx<0 || ansIdx>=choices.length){ continue; }
-      data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
-      added++;
-    }
-    saveAll(); buildPrepareFiltered(); renderList(); refreshAllFilters();
-    alert(`가져오기 완료: ${added}문항 추가`);
-  };
-
-  $("runCSV").onclick=async()=>{
-    const f = $("impCSV").files[0];
-    if(!f){ alert("CSV 파일을 선택해줘!"); return; }
-    const txt = await f.text();
-    const rows = parseCSV(txt);
-    if(rows.length < 2){ alert("CSV에 데이터가 없어요."); return; }
-    const header = rows[0].map(h=>h.trim());
-    const col = name => header.indexOf(name);
-    const idxNo  = col("문제번호");
-    const idxSub = col("과목");
-    const idxUnit= col("단원");
-    const idxQ   = col("문제");
-    const idxC1  = col("보기1");
-    const idxC2  = col("보기2");
-    const idxC3  = col("보기3");
-    const idxC4  = col("보기4");
-    const idxC5  = col("보기5");
-    const idxAns = col("답");
-    const idxExp = col("해설");
-    const need = [idxSub, idxUnit, idxQ, idxC1, idxC2, idxAns];
-    if(need.some(i=>i < 0)){
-      alert("필수 헤더(과목, 단원, 문제, 보기1, 보기2, 답)가 필요해요.");
-      return;
-    }
-    let added = 0;
-    for(let r=1; r<rows.length; r++){
-      const row = rows[r];
-      if(row.length===1 && !(row[0]||"").trim()) continue;
-      const subject = (row[idxSub] || "미지정").trim();
-      const unit    = (row[idxUnit]|| "일반").trim();
-      const question= (row[idxQ]   || "").trim();
-      const choices = [idxC1,idxC2,idxC3,idxC4,idxC5].filter(i=>i>=0).map(i=> (row[i]||"").trim()).filter(Boolean);
-      const ansIdx = parseInt((row[idxAns]||"").trim(), 10) - 1;
-      const explanation = idxExp>=0 ? (row[idxExp]||"").trim() : "";
-      if(!question || choices.length < 2 || isNaN(ansIdx) || ansIdx<0 || ansIdx>=choices.length) continue;
-      data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
-      added++;
-    }
-    saveAll(); buildPrepareFiltered(); renderList(); refreshAllFilters();
-    alert(`CSV 가져오기 완료: ${added}문항 추가`);
-  };
-
-  function parseCSV(text){
-    const sep = text.includes("\t") ? "\t" : ",";
-    const rows = [];
-    let cur = [], field = "", inQuotes = false;
-    for(let i=0;i<text.length;i++){
-      const ch = text[i];
-      if(inQuotes){
-        if(ch === '"'){
-          if(text[i+1] === '"'){ field += '"'; i++; }
-          else { inQuotes = false; }
-        }else{ field += ch; }
-      }else{
-        if(ch === '"') inQuotes = true;
-        else if(ch === sep){ cur.push(field); field = ""; }
-        else if(ch === "\n"){ cur.push(field); rows.push(cur); cur = []; field = ""; }
-        else if(ch === "\r"){ }
-        else { field += ch; }
-      }
-    }
-    cur.push(field); rows.push(cur);
-    return rows.filter(r => r.length>1 || (r[0] && r[0].trim()));
-  }
-
-  /***** 3) Firestore 동기화 레이어 *****/
-  // 한 문서에 전체 저장 (간단 버전). 큰 데이터가 되면 분할 저장으로 바꾸자.
-  // 경로: users/{uid}/app/appdata
-  let unsub = null;      // onSnapshot 해제용
-  let syncing = false;   // 내가 저장해서 생긴 변경을 다시 적용하지 않도록
-
-  function pack(){
-    return {
-      data, attempts, wrongSet, correctSet,
-      updatedAt: Date.now(),
-      schema: "v1"
-    };
-  }
-  function applyFromCloud(payload){
-    data       = payload.data       || [];
-    attempts   = payload.attempts   || {};
-    wrongSet   = payload.wrongSet   || {};
-    correctSet = payload.correctSet || {};
-    saveLocal(); // 로컬 캐시 갱신
-    // 화면 업데이트
-    buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
-    // 퀴즈 화면이면 재렌더
-    if(!$("buildSec").classList.contains("hidden")){} else { prepareFiltered(); startQuiz(); }
-  }
-
-  // 디바운스 저장(빠르게 여러 번 저장해도 0.7초에 한번)
-  let saveTimer = null;
-  function saveAll(){
-    saveLocal(); // 항상 로컬에도
-    const user = auth.currentUser;
-    if(!user){ return; } // 미로그인: 로컬에만
-    if(saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(async()=>{
-      try{
-        syncing = true;
-        const ref = doc(db, "users", user.uid, "app", "appdata");
-        await setDoc(ref, pack(), { merge: true });
-      }catch(e){
-        console.error("클라우드 저장 실패:", e);
-      }finally{
-        setTimeout(()=>{ syncing = false; }, 200);
-      }
-    }, 700);
-  }
-
-  async function attachRealtime(){
-    const user = auth.currentUser;
-    if(!user) return;
-    const ref = doc(db, "users", user.uid, "app", "appdata");
-
-    // 최초 로드
-    const snap = await getDoc(ref);
-    if(!snap.exists()){
-      // 클라우드 비어있고 로컬에 뭔가 있으면 업로드할지 물어봄
-      const hasLocal = (data.length || Object.keys(attempts).length || Object.keys(wrongSet).length || Object.keys(correctSet).length);
-      if(hasLocal){
-        const ok = confirm("클라우드에 데이터가 없어요. 지금 이 기기의 데이터를 업로드할까요?");
-        if(ok){ await setDoc(ref, pack(), { merge: true }); }
-        else { /* 아무 것도 안함(빈 상태 유지) */ }
-      }else{
-        // 둘 다 비었으면 그대로
-        await setDoc(ref, pack(), { merge: true });
-      }
-    }else{
-      // 클라우드에 있음 → 클라우드 우선 적용
-      applyFromCloud(snap.data());
-    }
-
-    // 실시간 구독
-    if(unsub) unsub();
-    unsub = onSnapshot(ref, (docSnap)=>{
-      if(!docSnap.exists()) return;
-      if(syncing) return; // 내가 방금 쓴 변경이면 무시
-      const payload = docSnap.data();
-      applyFromCloud(payload);
-    });
-  }
-
-  function detachRealtime(){
-    if(unsub){ unsub(); unsub=null; }
-  }
-
-  /***** 4) 로그인 UI *****/
-  const btnSignIn = $("btnSignIn");
-  const btnSignOut= $("btnSignOut");
-  const userInfo  = $("userInfo");
-
-  btnSignIn.onclick = async ()=>{
+$("loadBtn").onclick=()=>$("file").click();
+$("file").onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(t=>{
     try{
-      await signInWithPopup(auth, provider);
-    }catch(e){
-      alert("로그인 실패: "+e.message);
-    }
-  };
-  btnSignOut.onclick = async ()=>{
-    await signOut(auth);
-  };
-
-  onAuthStateChanged(auth, async (user)=>{
-    if(user){
-      userInfo.textContent = `${user.displayName||user.email||"사용자"} · 로그인됨`;
-      btnSignIn.style.display="none";
-      btnSignOut.style.display="";
-      await attachRealtime(); // 로그인되면 실시간 동기화 시작
-    }else{
-      userInfo.textContent = "로그인 필요";
-      btnSignIn.style.display="";
-      btnSignOut.style.display="none";
-      detachRealtime(); // 구독 해제
-    }
+      const incoming = JSON.parse(t);
+      const arr = Array.isArray(incoming) ? incoming : incoming.data;
+      if(!Array.isArray(arr)) throw new Error("JSON 형식이 문항 배열이 아님");
+      arr.forEach(q=>{ q.id = genId(); });
+      data = data.concat(arr);
+      buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
+      saveCloud();
+      alert("불러오기 완료!");
+    }catch(err){ alert("JSON 형식 오류: "+err.message); }
   });
+};
+
+$("startBtn").onclick=()=>{ if(data.length===0){ alert("문제가 없음!"); return; } prepareFiltered(); startQuiz(); show("quiz"); };
+$("backToBuild").onclick=()=>show("build");
+
+function renderList(){
+  const box=$("listBox");
+  const idxs = (buildFilteredIdxs.length ? buildFilteredIdxs : data.map((_,i)=>i));
+  if(data.length===0 || idxs.length===0){
+    box.innerHTML = "<div class='meta'>아직 없음. 문제를 추가해줘.</div>";
+    $("buildCount").textContent = 0; return;
+  }
+  box.innerHTML = idxs.map(i=>{
+    const q = data[i];
+    const checked = buildSelected.has(q.id) ? "checked" : "";
+    return `
+      <div class="item">
+        <label class="meta" style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <input type="checkbox" class="sel" data-id="${q.id}" ${checked}>
+          <span>#${q.id} · ${q.subject} / ${q.unit}</span>
+        </label>
+        <div>${q.question}</div>
+        <div class="meta">정답: ${q.answerIndex+1} | 보기: ${q.choices.join(" / ")}</div>
+        <div class="row" style="margin-top:6px">
+          <button class="btn danger" onclick="delQ(${q.id})">개별 삭제</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  Array.from(box.querySelectorAll(".sel")).forEach(chk=>{
+    chk.onchange = (e)=>{
+      const id = parseInt(e.target.getAttribute("data-id"),10);
+      if(e.target.checked) buildSelected.add(id); else buildSelected.delete(id);
+    };
+  });
+  $("buildCount").textContent = idxs.length;
+}
+
+window.delQ = (id)=>{
+  data = data.filter(x=>x.id!==id);
+  if(buildSelected.has(id)) buildSelected.delete(id);
+  if(attempts[id]) delete attempts[id];
+  delete wrongSet[id]; delete correctSet[id];
+  buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
+  saveCloud();
+};
+
+function genId(){ const used = new Set(data.map(q=>q.id)); let i = 1; while(used.has(i)) i++; return i; }
+
+/* 빌더 필터/버튼 */
+function buildPrepareFiltered(){
+  const s = $("buildFilterSubject") ? $("buildFilterSubject").value || "(전체)" : "(전체)";
+  const u = $("buildFilterUnit") ? $("buildFilterUnit").value || "(전체)" : "(전체)";
+  buildFilteredIdxs = data.map((q,i)=>({q,i}))
+    .filter(({q})=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
+    .map(({i})=>i);
+  if(buildFilteredIdxs.length===0) buildFilteredIdxs = data.map((_,i)=>i);
+}
+$("buildApplyFilter").onclick = ()=>{ buildSelected.clear(); buildPrepareFiltered(); renderList(); };
+$("buildClearFilter").onclick = ()=>{
+  if($("buildFilterSubject")) $("buildFilterSubject").selectedIndex = 0;
+  updateUnitOptions("buildFilterSubject","buildFilterUnit");
+  if($("buildFilterUnit")) $("buildFilterUnit").selectedIndex = 0;
+  buildSelected.clear(); buildPrepareFiltered(); renderList();
+};
+$("buildSelectAll").onclick   = ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ ch.checked = true; buildSelected.add(parseInt(ch.getAttribute("data-id"),10)); }); };
+$("buildSelectNone").onclick  = ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ ch.checked = false; buildSelected.delete(parseInt(ch.getAttribute("data-id"),10)); }); };
+$("buildSelectInvert").onclick= ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ const id=parseInt(ch.getAttribute("data-id"),10); const now=!ch.checked; ch.checked=now; if(now) buildSelected.add(id); else buildSelected.delete(id); }); };
+$("buildDeleteSelected").onclick = ()=>{
+  const ids = Array.from(buildSelected);
+  if(ids.length===0){ alert("선택된 문제가 없어!"); return; }
+  if(!confirm(`${ids.length}문항을 삭제할까요? (되돌릴 수 없음)`)) return;
+  const remove = new Set(ids);
+  data = data.filter(q=>!remove.has(q.id));
+  ids.forEach(id=>{ if(attempts[id]) delete attempts[id]; delete wrongSet[id]; delete correctSet[id]; });
+  buildSelected.clear(); refreshAllFilters(); buildPrepareFiltered(); renderList(); refreshNoteBadge();
+  saveCloud();
+};
+
+/* 공통 필터 */
+function refreshAllFilters(){
+  const subj = Array.from(new Set(data.map(q=>q.subject))).sort();
+  const unit = Array.from(new Set(data.map(q=>q.unit))).sort();
+  // 퀴즈/리뷰
+  fillSelect($("filterSubject"), ["(전체)", ...subj]);
+  fillSelect($("filterUnit"), ["(전체)", ...unit]);
+  fillSelect($("revSubject"), ["(전체)", ...subj]);
+  fillSelect($("revUnit"), ["(전체)", ...unit]);
+  updateUnitOptions("filterSubject","filterUnit");
+  updateUnitOptions("revSubject","revUnit");
+  // 빌더
+  if($("buildFilterSubject")) fillSelect($("buildFilterSubject"), ["(전체)", ...subj]);
+  if($("buildFilterUnit")) fillSelect($("buildFilterUnit"), ["(전체)", ...unit]);
+  updateUnitOptions("buildFilterSubject","buildFilterUnit");
+}
+function fillSelect(sel, arr){ if(!sel) return; sel.innerHTML = arr.map(v=>`<option value="${v}">${v}</option>`).join(""); }
+function getUnitsForSubject(subject){ const set = new Set(); data.forEach(q=>{ if(subject==="(전체)" || q.subject===subject) set.add(q.unit); }); return ["(전체)", ...Array.from(set).sort()]; }
+function updateUnitOptions(subjId, unitId){ const sEl=$(subjId), uEl=$(unitId); if(!sEl||!uEl) return; const s = sEl.value || "(전체)"; fillSelect(uEl, getUnitsForSubject(s)); }
+
+/* 퀴즈 */
+["onlyWrong","onlyCorrect"].forEach(id=>{ const el=$(id); if(el){ el.onchange = ()=>{ prepareFiltered(); startQuiz(); }; }});
+$("applyFilter").onclick=()=>{ prepareFiltered(); startQuiz(); };
+$("clearFilter").onclick = () => {
+  $("filterSubject").selectedIndex = 0; updateUnitOptions("filterSubject","filterUnit");
+  $("filterUnit").selectedIndex = 0;
+  if($("onlyWrong")) $("onlyWrong").checked = false;
+  if($("onlyCorrect")) $("onlyCorrect").checked = false;
+  prepareFiltered(); startQuiz();
+};
+
+function prepareFiltered(){
+  const s = $("filterSubject").value;
+  const u = $("filterUnit").value;
+  const onlyWrong = $("onlyWrong") && $("onlyWrong").checked;
+  const onlyCorrect = $("onlyCorrect") && $("onlyCorrect").checked;
+  filteredIdxs = data.map((q,i)=>({q,i}))
+    .filter(({q})=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
+    .filter(({q})=>{
+      if(onlyWrong && onlyCorrect) return !!wrongSet[q.id] || !!correctSet[q.id];
+      if(onlyWrong) return !!wrongSet[q.id];
+      if(onlyCorrect) return !!correctSet[q.id];
+      return true;
+    }).map(({i})=>i);
+  if(!onlyWrong && !onlyCorrect && filteredIdxs.length===0) filteredIdxs = data.map((_,i)=>i);
+}
+
+function startQuiz(){ idx=0; correct=0; wrong=0;
+  if ($("showAll") && $("showAll").checked) { setAllModeUI(true); renderQuizAll(); }
+  else { setAllModeUI(false); renderQuiz(); }
+}
+function renderQuiz(){
+  const total = filteredIdxs.length;
+  $("idx").textContent = total? idx+1:0;
+  $("total").textContent = total;
+  $("good").textContent = correct; $("bad").textContent = wrong;
+  $("bar").style.width = (total? (idx/total*100):0) + "%";
+  if(total===0){ $("qtext").textContent="해당 필터에 문제가 없어요."; $("choices").innerHTML=""; $("exp").textContent=""; return; }
+  const q = data[filteredIdxs[idx]];
+  $("subjectNow").textContent = `${q.subject} / ${q.unit}`;
+  $("qtext").textContent = q.id+". "+q.question;
+  $("exp").textContent = "";
+  $("choices").innerHTML = q.choices.map((c,i)=>`<button onclick="choose(${i})">${i+1}. ${c}</button>`).join("");
+  $("prevBtn").disabled = idx===0;
+  $("nextBtn").textContent = (idx===total-1) ? "결과" : "다음";
+}
+function setAllModeUI(on){ $("prevBtn").style.display = on ? "none" : ""; $("nextBtn").style.display = on ? "none" : ""; }
+function renderQuizAll(){
+  const total = filteredIdxs.length;
+  $("idx").textContent = 0; $("total").textContent = total;
+  $("good").textContent = correct; $("bad").textContent = wrong; $("bar").style.width = "0%";
+  if(total===0){ $("qtext").textContent="해당 필터에 문제가 없어요."; $("choices").innerHTML=""; $("exp").textContent=""; return; }
+  $("subjectNow").textContent = "(전체 보기 모드) 선택된 문항 " + total + "개";
+  $("qtext").textContent = "아래에서 바로 풀어봐!"; $("exp").textContent = "";
+  const html = filteredIdxs.map((di, k)=>{
+    const q = data[di];
+    const buttons = q.choices.map((c,i)=>`<button onclick="chooseAll(${k}, ${i})">${i+1}. ${c}</button>`).join("");
+    return `<div class="item" id="qblock_${k}">
+      <div class="meta">#${q.id} · ${q.subject} / ${q.unit}</div>
+      <div style="font-weight:600;margin:6px 0">${q.question}</div>
+      <div class="choices" id="choices_all_${k}">${buttons}</div>
+      <p class="meta" id="exp_all_${k}" style="margin-top:6px"></p>
+    </div>`;
+  }).join("");
+  $("choices").innerHTML = html;
+}
+
+function recordResult(q, ok, choiceIndex){
+  attempts[q.id] = { lastState: ok?"correct":"wrong", lastChoice: choiceIndex };
+  if(ok){ delete wrongSet[q.id]; correctSet[q.id] = true; }
+  else { wrongSet[q.id] = true; delete correctSet[q.id]; }
+  refreshNoteBadge();
+  saveCloud(); // 결과 동기화
+}
+
+window.chooseAll = (k, i)=>{
+  const di = filteredIdxs[k]; const q = data[di];
+  const choicesBox = document.getElementById("choices_all_"+k); if(!choicesBox) return;
+  if(Array.from(choicesBox.children).some(b=>b.disabled)) return;
+  Array.from(choicesBox.children).forEach((b,j)=>{ b.disabled=true; if(j===q.answerIndex) b.classList.add("correct"); if(j===i && i!==q.answerIndex) b.classList.add("wrong"); });
+  const ok = (i===q.answerIndex);
+  document.getElementById("exp_all_"+k).textContent = (ok? "정답! " : "오답. 정답은 " + (q.answerIndex+1) + "번. ") + (q.explanation||"");
+  if(ok) correct++; else wrong++; $("good").textContent = correct; $("bad").textContent = wrong;
+  recordResult(q, ok, i);
+};
+
+window.choose = (i)=>{
+  const q = data[filteredIdxs[idx]];
+  [...$("choices").children].forEach((b,j)=>{ b.disabled=true; if(j===q.answerIndex) b.classList.add("correct"); if(j===i && i!==q.answerIndex) b.classList.add("wrong"); });
+  const ok = (i===q.answerIndex);
+  $("exp").textContent = (ok? "정답! ":"오답. 정답은 "+(q.answerIndex+1)+"번. ") + (q.explanation||"");
+  if(ok) correct++; else wrong++; $("good").textContent = correct; $("bad").textContent = wrong;
+  recordResult(q, ok, i);
+};
+$("prevBtn").onclick=()=>{ if(idx>0){ idx--; renderQuiz(); } };
+$("nextBtn").onclick=()=>{ const total=filteredIdxs.length; if(idx<total-1){ idx++; renderQuiz(); } else { alert(`끝! 정답 ${correct}, 오답 ${wrong}`); } };
+
+/* 리뷰 */
+$("revApply").onclick=()=>renderReview();
+$("exportWrong").onclick=()=>exportByState("wrong");
+$("exportCorrect").onclick=()=>exportByState("correct");
+$("exportWrongSet").onclick=()=>exportSet("wrong");
+$("exportCorrectSet").onclick=()=>exportSet("correct");
+$("clearWrongSet").onclick=()=>{ if(confirm("오답노트를 모두 비울까요?")){ wrongSet={}; refreshNoteBadge(); saveCloud(); alert("오답노트 초기화 완료"); } };
+$("clearCorrectSet").onclick=()=>{ if(confirm("정답노트를 모두 비울까요?")){ correctSet={}; refreshNoteBadge(); saveCloud(); alert("정답노트 초기화 완료"); } };
+
+function renderReview(){
+  const s = $("revSubject").value, u = $("revUnit").value, st = $("revState").value;
+  const rows = data.filter(q=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
+    .map(q=>{ const att = attempts[q.id]; const state = att?.lastState || "-"; const my = att?.lastChoice!=null ? (q.choices[att.lastChoice]||"-") : "-"; const ans = q.choices[q.answerIndex]||"-"; return {q, state, my, ans}; })
+    .filter(r=> st==="all" ? true : r.state===st);
+  $("revBody").innerHTML = rows.map((r,i)=>`<tr>
+    <td>${i+1}</td><td>${r.q.subject}</td><td>${r.q.unit}</td><td>${r.q.question}</td><td>${r.my}</td><td>${r.ans}</td><td>${r.state}</td>
+  </tr>`).join("");
+}
+function exportByState(state){
+  const out = data.filter(q=>{ const st = attempts[q.id]?.lastState; return state==="all"? true : st===state; });
+  const blob = new Blob([JSON.stringify(out, null, 2)], {type:"application/json"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = state+"_questions_recent.json"; a.click();
+}
+function exportSet(which){
+  const ids = which==="wrong" ? wrongSet : correctSet;
+  const out = data.filter(q=> !!ids[q.id]);
+  const blob = new Blob([JSON.stringify(out, null, 2)], {type:"application/json"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = which+"_note_accumulated.json"; a.click();
+}
+
+/* 대량 가져오기 */
+$("runImport").onclick=async()=>{
+  if(!user){ alert("로그인 후 이용해줘!"); return; }
+  const fq = $("impQ").files[0], fa = $("impA").files[0], fe = $("impE").files[0];
+  if(!fq || !fa){ alert("문제 파일과 정답 파일은 필수!"); return; }
+  const [tq, ta, te] = await Promise.all([fq.text(), fa.text(), fe?fe.text():Promise.resolve("")]);
+  const qLines = tq.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const aLines = ta.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const eLines = te.split(/\r?\n/).map(s=>s.trim());
+  const N = Math.min(qLines.length, aLines.length);
+  let added=0;
+  for(let i=0;i<N;i++){
+    const parts = qLines[i].split("|").map(s=>s.trim());
+    const subject = parts[0]||"미지정";
+    const unit = parts[1]||"일반";
+    const question = parts[2]||"";
+    const choices = parts.slice(3).filter(Boolean);
+    const ansIdx = parseInt(aLines[i],10) - 1;
+    const explanation = eLines[i]||"";
+    if(!question || choices.length<2 || isNaN(ansIdx) || ansIdx<0 || ansIdx>=choices.length){ continue; }
+    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
+    added++;
+  }
+  buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
+  alert(`가져오기 완료: ${added}문항 추가`);
+};
+$("runCSV").onclick=async()=>{
+  if(!user){ alert("로그인 후 이용해줘!"); return; }
+  const f = $("impCSV").files[0]; if(!f){ alert("CSV 파일을 선택해줘!"); return; }
+  const txt = await f.text(); const rows = parseCSV(txt); if(rows.length < 2){ alert("CSV에 데이터가 없어요."); return; }
+  const header = rows[0].map(h=>h.trim()); const col = name => header.indexOf(name);
+  const idxSub = col("과목"), idxUnit = col("단원"), idxQ = col("문제"), idxC1 = col("보기1"), idxC2 = col("보기2"), idxC3 = col("보기3"), idxC4 = col("보기4"), idxC5 = col("보기5"), idxAns = col("답"), idxExp = col("해설");
+  const need = [idxSub, idxUnit, idxQ, idxC1, idxC2, idxAns]; if(need.some(i=>i<0)){ alert("필수 헤더(과목, 단원, 문제, 보기1, 보기2, 답)가 필요해요."); return; }
+  let added=0;
+  for(let r=1; r<rows.length; r++){
+    const row = rows[r]; if(row.length===1 && !(row[0]||"").trim()) continue;
+    const subject=(row[idxSub]||"미지정").trim(), unit=(row[idxUnit]||"일반").trim(), question=(row[idxQ]||"").trim();
+    const choices=[idxC1,idxC2,idxC3,idxC4,idxC5].filter(i=>i>=0).map(i=>(row[i]||"").trim()).filter(Boolean);
+    const ansIdx=parseInt((row[idxAns]||"").trim(),10)-1; const explanation=idxExp>=0?(row[idxExp]||"").trim():"";
+    if(!question || choices.length<2 || isNaN(ansIdx) || ansIdx<0 || ansIdx>=choices.length) continue;
+    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation }); added++;
+  }
+  buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
+  alert(`CSV 가져오기 완료: ${added}문항 추가`);
+};
+function parseCSV(text){
+  const sep = text.includes("\t") ? "\t" : ","; const rows=[]; let cur=[], field="", inQuotes=false;
+  for(let i=0;i<text.length;i++){ const ch=text[i];
+    if(inQuotes){ if(ch === '"'){ if(text[i+1] === '"'){ field+='"'; i++; } else { inQuotes=false; } } else { field += ch; } }
+    else{ if(ch === '"') inQuotes=true; else if(ch === sep){ cur.push(field); field=""; } else if(ch === "\n"){ cur.push(field); rows.push(cur); cur=[]; field=""; } else if(ch!=="\r"){ field += ch; } }
+  }
+  cur.push(field); rows.push(cur); return rows.filter(r=> r.length>1 || (r[0] && r[0].trim()));
+}
 </script>
+
 </body>
 </html>
