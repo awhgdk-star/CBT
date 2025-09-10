@@ -688,92 +688,67 @@ $("runImport").onclick=async()=>{
 
 
 
-// CSV 가져오기(헤더 매칭)
-$("runCSV").onclick = async () => {
-  const f = $("impCSV").files[0];
-  if (!f) { alert("CSV 파일을 선택해줘!"); return; }
 
-  const txt = await f.text();
-  const rows = parseCSV(txt);
-  if (rows.length < 2) { alert("CSV에 데이터가 없어요."); return; }
 
-  const header = rows[0].map(h => h.trim());
-  const col = name => header.indexOf(name);
-  const idxSub  = col("과목");
-  const idxUnit = col("단원");
-  const idxQ    = col("문제");
-  const idxC1   = col("보기1");
-  const idxC2   = col("보기2");
-  const idxC3   = col("보기3");
-  const idxC4   = col("보기4");
-  const idxC5   = col("보기5");
-  const idxAns  = col("답");
-  const idxExp  = col("해설");
+$("runCSV").onclick=async()=>{
+  if(!user){ alert("로그인 후 이용해줘!"); return; }
+  const f = $("impCSV").files[0]; if(!f){ alert("CSV 파일을 선택해줘!"); return; }
+  const txt = await f.text(); const rows = parseCSV(txt); if(rows.length < 2){ alert("CSV에 데이터가 없어요."); return; }
+
+  const header = rows[0].map(h=>h.trim()); const col = name => header.indexOf(name);
+  const idxSub = col("과목"), idxUnit = col("단원"), idxQ = col("문제"),
+        idxC1 = col("보기1"), idxC2 = col("보기2"), idxC3 = col("보기3"),
+        idxC4 = col("보기4"), idxC5 = col("보기5"),
+        idxAns = col("답"), idxExp = col("해설");
 
   const need = [idxSub, idxUnit, idxQ, idxC1, idxC2, idxAns];
-  if (need.some(i => i < 0)) {
-    alert("필수 헤더(과목, 단원, 문제, 보기1, 보기2, 답)가 필요해요.");
-    return;
-  }
+  if(need.some(i=>i<0)){ alert("필수 헤더(과목, 단원, 문제, 보기1, 보기2, 답)가 필요해요."); return; }
 
-  let added = 0;
-  const skipped = [];
+  let added=0;
+  let errors=[];
+  for(let r=1; r<rows.length; r++){
+    const row = rows[r]; 
+    if(row.length===1 && !(row[0]||"").trim()) continue;
 
-  const isHeaderRow = (row) => {
-    if (!row) return false;
-    const joined = row.join(",").trim();
-    return joined === header.join(",") || (row[0] || "").trim() === "문제번호";
-  };
+    const subject=(row[idxSub]||"미지정").trim(),
+          unit=(row[idxUnit]||"일반").trim(),
+          question=(row[idxQ]||"").trim();
 
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row || (row.length === 1 && !(row[0] || "").trim())) continue;
-    if (isHeaderRow(row)) continue;
-    while (row.length < header.length) row.push("");
-
-    const subject = (row[idxSub]  || "미지정").trim();
-    const unit    = (row[idxUnit] || "일반").trim();
-    const question= (row[idxQ]    || "").trim();
-    const choices = [idxC1, idxC2, idxC3, idxC4, idxC5]
-      .filter(i => i >= 0)
-      .map(i => (row[i] || "").trim())
+    const choices=[idxC1,idxC2,idxC3,idxC4,idxC5]
+      .filter(i=>i>=0)
+      .map(i=>(row[i]||"").trim())
       .filter(Boolean);
 
-    const ansRaw = (row[idxAns] || "").trim();
-    const ansIdx = parseInt(ansRaw, 10) - 1;
-    const explanation = idxExp >= 0 ? (row[idxExp] || "").trim() : "";
+    const ansIdx=parseInt((row[idxAns]||"").trim(),10)-1;
+    const explanation=idxExp>=0?(row[idxExp]||"").trim():"";
 
-    if (!question) {
-      skipped.push({ row: r + 1, reason: "문제가 비어있음", sample: row.slice(0, 6).join(" | ") });
-      continue;
+    if(!question){
+      errors.push({line:r+1, reason:"문제 없음"}); continue;
     }
-    if (choices.length < 2) {
-      skipped.push({ row: r + 1, reason: "보기 2개 미만", sample: row.slice(0, 8).join(" | ") });
-      continue;
+    if(choices.length<2){
+      errors.push({line:r+1, reason:"보기 2개 미만"}); continue;
     }
-    if (isNaN(ansIdx)) {
-      skipped.push({ row: r + 1, reason: "답이 숫자(1~5)가 아님", sample: `답='${ansRaw}'` });
-      continue;
+    if(isNaN(ansIdx)){
+      errors.push({line:r+1, reason:"정답 번호 없음/숫자 아님"}); continue;
     }
-    if (ansIdx < 0 || ansIdx >= choices.length) {
-      skipped.push({ row: r + 1, reason: `답 범위 벗어남 (보기수=${choices.length}, 답=${ansIdx + 1})`, sample: row.slice(0, 9).join(" | ") });
-      continue;
+    if(ansIdx<0 || ansIdx>=choices.length){
+      errors.push({line:r+1, reason:"정답 번호 범위 오류"}); continue;
     }
 
     data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
     added++;
   }
 
-  saveCloud(); buildPrepareFiltered(); renderList(); refreshAllFilters();
+  buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
 
-  if (skipped.length === 0) {
-    alert(`CSV 가져오기 완료: ${added}문항 추가 (스킵 0)`);
-  } else {
-    const head = skipped.slice(0, 10).map(s => `- ${s.row}행: ${s.reason} (${s.sample})`).join("\n");
-    const more = skipped.length > 10 ? `\n... 외 ${skipped.length - 10}개 줄` : "";
-    alert(`CSV 가져오기 완료: ${added}문항 추가, 스킵 ${skipped.length}개\n\n스킵 이유(일부):\n${head}${more}`);
+  let msg=`CSV 가져오기 완료: ${added}문항 추가`;
+  if(errors.length){
+    msg+=`\n오류 ${errors.length}건:\n`+errors.map(e=>`줄 ${e.line}: ${e.reason}`).join("\n");
   }
+  alert(msg);
 };
+
+
 
 
 
