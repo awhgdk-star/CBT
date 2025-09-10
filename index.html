@@ -688,8 +688,7 @@ $("runImport").onclick=async()=>{
 
 
 
-
-// CSV 가져오기(헤더 매칭) — 보강판: 중간 헤더 자동 무시 + 스킵 리포트
+// CSV 가져오기(헤더 매칭)
 $("runCSV").onclick = async () => {
   const f = $("impCSV").files[0];
   if (!f) { alert("CSV 파일을 선택해줘!"); return; }
@@ -698,10 +697,8 @@ $("runCSV").onclick = async () => {
   const rows = parseCSV(txt);
   if (rows.length < 2) { alert("CSV에 데이터가 없어요."); return; }
 
-  // 첫 헤더
   const header = rows[0].map(h => h.trim());
   const col = name => header.indexOf(name);
-  const idxNo   = col("문제번호");
   const idxSub  = col("과목");
   const idxUnit = col("단원");
   const idxQ    = col("문제");
@@ -720,9 +717,8 @@ $("runCSV").onclick = async () => {
   }
 
   let added = 0;
-  const skipped = []; // {row, reason, sample}
+  const skipped = [];
 
-  // 중간에 또 나온 헤더 줄 자동 무시
   const isHeaderRow = (row) => {
     if (!row) return false;
     const joined = row.join(",").trim();
@@ -731,20 +727,13 @@ $("runCSV").onclick = async () => {
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-
-    // 빈 줄 스킵
     if (!row || (row.length === 1 && !(row[0] || "").trim())) continue;
-
-    // 섹션 헤더(중간 헤더) 스킵
     if (isHeaderRow(row)) continue;
-
-    // 칸 부족하면 채우기
     while (row.length < header.length) row.push("");
 
     const subject = (row[idxSub]  || "미지정").trim();
     const unit    = (row[idxUnit] || "일반").trim();
     const question= (row[idxQ]    || "").trim();
-
     const choices = [idxC1, idxC2, idxC3, idxC4, idxC5]
       .filter(i => i >= 0)
       .map(i => (row[i] || "").trim())
@@ -752,10 +741,8 @@ $("runCSV").onclick = async () => {
 
     const ansRaw = (row[idxAns] || "").trim();
     const ansIdx = parseInt(ansRaw, 10) - 1;
-
     const explanation = idxExp >= 0 ? (row[idxExp] || "").trim() : "";
 
-    // 유효성 체크 + 이유 기록
     if (!question) {
       skipped.push({ row: r + 1, reason: "문제가 비어있음", sample: row.slice(0, 6).join(" | ") });
       continue;
@@ -773,17 +760,12 @@ $("runCSV").onclick = async () => {
       continue;
     }
 
-    data.push({
-      id: genId(),
-      subject, unit, question,
-      choices, answerIndex: ansIdx, explanation
-    });
+    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
     added++;
   }
 
-  saveLocal(); buildPrepareFiltered(); renderList(); refreshAllFilters();
+  saveCloud(); buildPrepareFiltered(); renderList(); refreshAllFilters();
 
-  // 결과 알림
   if (skipped.length === 0) {
     alert(`CSV 가져오기 완료: ${added}문항 추가 (스킵 0)`);
   } else {
@@ -792,6 +774,7 @@ $("runCSV").onclick = async () => {
     alert(`CSV 가져오기 완료: ${added}문항 추가, 스킵 ${skipped.length}개\n\n스킵 이유(일부):\n${head}${more}`);
   }
 };
+
 
 
 
