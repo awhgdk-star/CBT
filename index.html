@@ -238,14 +238,14 @@ const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
-/* 오프라인 캐시 (오프라인에서도 작동, 재연결 시 자동 동기화) */
-enableIndexedDbPersistence(db).catch(()=>{ /* 이미 활성화된 경우 무시 */ });
+/* 오프라인 캐시 */
+enableIndexedDbPersistence(db).catch(()=>{});
 
-/* ======== 2) 앱 상태 ======== */
+/* ======== 2) 공용 ======== */
 const $ = id=>document.getElementById(id);
 let user = null;
 
-/* 원래 v7의 상태 변수들 */
+/* 상태 */
 let data = [];                         // 문항 배열
 let idx=0, correct=0, wrong=0;
 let filteredIdxs=[];
@@ -257,7 +257,7 @@ let correctSet = {};                   // {qid:true}
 let buildFilteredIdxs = [];
 let buildSelected = new Set();
 
-/* 로컬 백업 (문제 많아도 빠르게 로드) */
+/* 로컬 백업 */
 function backupSave(){
   localStorage.setItem("cbt_backup", JSON.stringify({data, attempts, wrongSet, correctSet}));
 }
@@ -268,15 +268,11 @@ function backupLoad(){
   }catch{}
 }
 
-/* ======== 3) 클라우드 저장/로드 ======== */
-/* 저장 위치: users/{uid}/bundle  (한 문서에 묶음 저장·간단)
-   대량(수천 문항)까지 쓰면 1MB 제한에 걸릴 수 있어.
-   그때는 '문항당 1문서' 구조로 바꾸자. (지금은 간단 버전) */
+/* 클라우드 저장/로드 */
 function cloudDocRef(){
   if(!user) return null;
   return doc(db, "users", user.uid, "app", "bundle");
 }
-
 let saveTimer = null;
 function saveCloud(debounceMs=800){
   if(!user) return;
@@ -294,7 +290,6 @@ function saveCloud(debounceMs=800){
     }
   }, debounceMs);
 }
-
 async function loadCloud(){
   if(!user) return;
   $("syncBadge").textContent = "불러오는 중…";
@@ -305,7 +300,6 @@ async function loadCloud(){
       const b = snap.data();
       data = b.data||[]; attempts = b.attempts||{}; wrongSet = b.wrongSet||{}; correctSet = b.correctSet||{};
     }else{
-      // 최초 사용자: 빈 상태를 만들어 저장
       await setDoc(cloudDocRef(), {data:[], attempts:{}, wrongSet:{}, correctSet:{}, ts: Date.now()});
       data=[]; attempts={}; wrongSet={}; correctSet={};
     }
@@ -319,34 +313,7 @@ async function loadCloud(){
   }
 }
 
-/* ======== 4) 인증 UI ======== */
-$("loginBtn").onclick = async () => {
-  try{
-    await signInWithPopup(auth, new GoogleAuthProvider());
-  }catch(e){
-    alert("로그인 실패: " + (e?.message || e));
-  }
-};
-$("logoutBtn").onclick = ()=> signOut(auth);
-
-onAuthStateChanged(auth, async (u)=>{
-  user = u || null;
-  if(user){
-    $("loginBtn").classList.add("hidden");
-    $("logoutBtn").classList.remove("hidden");
-    $("whoAmI").textContent = user.email || user.displayName || user.uid;
-    await loadCloud();
-    initAfterDataLoad();   // 데이터 로드 후 UI 초기화
-  }else{
-    $("loginBtn").classList.remove("hidden");
-    $("logoutBtn").classList.add("hidden");
-    $("whoAmI").textContent = "";
-    // 로그인 전에는 화면은 보이되 버튼들 동작 막기
-    disableAppUntilLogin(true);
-  }
-});
-
-/* 로그인 전 차단(읽기만 허용 느낌) */
+/* 로그인 전 차단 */
 function disableAppUntilLogin(lock){
   const needsAuth = document.querySelectorAll("#buildSec .btn, #quizSec .btn, #reviewSec .btn, #importSec .btn, input, textarea, select");
   needsAuth.forEach(el=>{
@@ -358,11 +325,10 @@ function disableAppUntilLogin(lock){
       el.classList.remove("dim");
     }
   });
-  // 로그인 버튼은 항상 가능
   $("loginBtn").removeAttribute("disabled");
 }
 
-/* ======== 5) 기존 v7 로직 (저장만 클라우드로 교체) ======== */
+/* 공통 뷰 업데이트 */
 function noteCounts(){ return {w:Object.keys(wrongSet).length, c:Object.keys(correctSet).length}; }
 function refreshNoteBadge(){ const {w,c}=noteCounts(); const el=$("noteBadge"); if(el) el.textContent = `오답노트 ${w} · 정답노트 ${c}`; }
 
@@ -372,14 +338,9 @@ function initAfterDataLoad(){
   renderList();
   refreshAllFilters();
   refreshNoteBadge();
-  // 이벤트 핸들러들(중복 등록 방지용 once 패턴)
 }
 
 /* 탭 전환 */
-$("tabBuild").onclick = ()=>show("build");
-$("tabQuiz").onclick  = ()=>{ show("quiz"); prepareFiltered(); startQuiz(); };
-$("tabReview").onclick= ()=>show("review");
-$("tabImport").onclick= ()=>show("import");
 function show(which){
   const map={build:"buildSec",quiz:"quizSec",review:"reviewSec",import:"importSec"};
   Object.values(map).forEach(id=>$(id).classList.add("hidden"));
@@ -391,53 +352,7 @@ function show(which){
   if(which==="import")$("tabImport").classList.add("active");
 }
 
-/* 빌더 */
-$("clearBtn").onclick=()=>["subject","unit","question","c1","c2","c3","c4","c5","explain"].forEach(id=>$(id).value="");
-$("addBtn").onclick=()=>{
-  if(!user){ alert("로그인 후 이용해줘!"); return; }
-  const subject = $("subject").value.trim()||"미지정";
-  const unit = $("unit").value.trim()||"일반";
-  const question = $("question").value.trim();
-  const choices = ["c1","c2","c3","c4","c5"].map(id=>($(id).value||"").trim()).filter(v=>v);
-  const ai = parseInt($("answerIndex").value,10)-1;
-  const explanation = $("explain").value.trim();
-  if(!question || choices.length<2 || isNaN(ai) || ai<0 || ai>=choices.length){
-    alert("문항/보기(2개 이상)/정답 번호를 확인해줘."); return;
-  }
-  data.push({ id: genId(), subject, unit, question, choices, answerIndex: ai, explanation });
-  buildPrepareFiltered(); renderList(); refreshAllFilters();
-  $("clearBtn").click();
-  saveCloud();  // <-- 클라우드 저장
-};
-
-$("saveBtn").onclick=()=>{
-  const blob = new Blob([JSON.stringify({data,attempts,wrongSet,correctSet}, null, 2)], {type:"application/json"});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "cbt_backup.json";
-  a.click();
-};
-
-$("loadBtn").onclick=()=>$("file").click();
-$("file").onchange=e=>{
-  const f=e.target.files[0]; if(!f) return;
-  f.text().then(t=>{
-    try{
-      const incoming = JSON.parse(t);
-      const arr = Array.isArray(incoming) ? incoming : incoming.data;
-      if(!Array.isArray(arr)) throw new Error("JSON 형식이 문항 배열이 아님");
-      arr.forEach(q=>{ q.id = genId(); });
-      data = data.concat(arr);
-      buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
-      saveCloud();
-      alert("불러오기 완료!");
-    }catch(err){ alert("JSON 형식 오류: "+err.message); }
-  });
-};
-
-$("startBtn").onclick=()=>{ if(data.length===0){ alert("문제가 없음!"); return; } prepareFiltered(); startQuiz(); show("quiz"); };
-$("backToBuild").onclick=()=>show("build");
-
+/* 빌더 렌더 */
 function renderList(){
   const box=$("listBox");
   const idxs = (buildFilteredIdxs.length ? buildFilteredIdxs : data.map((_,i)=>i));
@@ -470,7 +385,6 @@ function renderList(){
   });
   $("buildCount").textContent = idxs.length;
 }
-
 window.delQ = (id)=>{
   data = data.filter(x=>x.id!==id);
   if(buildSelected.has(id)) buildSelected.delete(id);
@@ -479,10 +393,7 @@ window.delQ = (id)=>{
   buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
   saveCloud();
 };
-
 function genId(){ const used = new Set(data.map(q=>q.id)); let i = 1; while(used.has(i)) i++; return i; }
-
-/* 빌더 필터/버튼 */
 function buildPrepareFiltered(){
   const s = $("buildFilterSubject") ? $("buildFilterSubject").value || "(전체)" : "(전체)";
   const u = $("buildFilterUnit") ? $("buildFilterUnit").value || "(전체)" : "(전체)";
@@ -491,26 +402,6 @@ function buildPrepareFiltered(){
     .map(({i})=>i);
   if(buildFilteredIdxs.length===0) buildFilteredIdxs = data.map((_,i)=>i);
 }
-$("buildApplyFilter").onclick = ()=>{ buildSelected.clear(); buildPrepareFiltered(); renderList(); };
-$("buildClearFilter").onclick = ()=>{
-  if($("buildFilterSubject")) $("buildFilterSubject").selectedIndex = 0;
-  updateUnitOptions("buildFilterSubject","buildFilterUnit");
-  if($("buildFilterUnit")) $("buildFilterUnit").selectedIndex = 0;
-  buildSelected.clear(); buildPrepareFiltered(); renderList();
-};
-$("buildSelectAll").onclick   = ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ ch.checked = true; buildSelected.add(parseInt(ch.getAttribute("data-id"),10)); }); };
-$("buildSelectNone").onclick  = ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ ch.checked = false; buildSelected.delete(parseInt(ch.getAttribute("data-id"),10)); }); };
-$("buildSelectInvert").onclick= ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ const id=parseInt(ch.getAttribute("data-id"),10); const now=!ch.checked; ch.checked=now; if(now) buildSelected.add(id); else buildSelected.delete(id); }); };
-$("buildDeleteSelected").onclick = ()=>{
-  const ids = Array.from(buildSelected);
-  if(ids.length===0){ alert("선택된 문제가 없어!"); return; }
-  if(!confirm(`${ids.length}문항을 삭제할까요? (되돌릴 수 없음)`)) return;
-  const remove = new Set(ids);
-  data = data.filter(q=>!remove.has(q.id));
-  ids.forEach(id=>{ if(attempts[id]) delete attempts[id]; delete wrongSet[id]; delete correctSet[id]; });
-  buildSelected.clear(); refreshAllFilters(); buildPrepareFiltered(); renderList(); refreshNoteBadge();
-  saveCloud();
-};
 
 /* 공통 필터 */
 function refreshAllFilters(){
@@ -533,16 +424,6 @@ function getUnitsForSubject(subject){ const set = new Set(); data.forEach(q=>{ i
 function updateUnitOptions(subjId, unitId){ const sEl=$(subjId), uEl=$(unitId); if(!sEl||!uEl) return; const s = sEl.value || "(전체)"; fillSelect(uEl, getUnitsForSubject(s)); }
 
 /* 퀴즈 */
-["onlyWrong","onlyCorrect"].forEach(id=>{ const el=$(id); if(el){ el.onchange = ()=>{ prepareFiltered(); startQuiz(); }; }});
-$("applyFilter").onclick=()=>{ prepareFiltered(); startQuiz(); };
-$("clearFilter").onclick = () => {
-  $("filterSubject").selectedIndex = 0; updateUnitOptions("filterSubject","filterUnit");
-  $("filterUnit").selectedIndex = 0;
-  if($("onlyWrong")) $("onlyWrong").checked = false;
-  if($("onlyCorrect")) $("onlyCorrect").checked = false;
-  prepareFiltered(); startQuiz();
-};
-
 function prepareFiltered(){
   const s = $("filterSubject").value;
   const u = $("filterUnit").value;
@@ -558,7 +439,6 @@ function prepareFiltered(){
     }).map(({i})=>i);
   if(!onlyWrong && !onlyCorrect && filteredIdxs.length===0) filteredIdxs = data.map((_,i)=>i);
 }
-
 function startQuiz(){ idx=0; correct=0; wrong=0;
   if ($("showAll") && $("showAll").checked) { setAllModeUI(true); renderQuizAll(); }
   else { setAllModeUI(false); renderQuiz(); }
@@ -598,15 +478,13 @@ function renderQuizAll(){
   }).join("");
   $("choices").innerHTML = html;
 }
-
 function recordResult(q, ok, choiceIndex){
   attempts[q.id] = { lastState: ok?"correct":"wrong", lastChoice: choiceIndex };
   if(ok){ delete wrongSet[q.id]; correctSet[q.id] = true; }
   else { wrongSet[q.id] = true; delete correctSet[q.id]; }
   refreshNoteBadge();
-  saveCloud(); // 결과 동기화
+  saveCloud();
 }
-
 window.chooseAll = (k, i)=>{
   const di = filteredIdxs[k]; const q = data[di];
   const choicesBox = document.getElementById("choices_all_"+k); if(!choicesBox) return;
@@ -617,7 +495,6 @@ window.chooseAll = (k, i)=>{
   if(ok) correct++; else wrong++; $("good").textContent = correct; $("bad").textContent = wrong;
   recordResult(q, ok, i);
 };
-
 window.choose = (i)=>{
   const q = data[filteredIdxs[idx]];
   [...$("choices").children].forEach((b,j)=>{ b.disabled=true; if(j===q.answerIndex) b.classList.add("correct"); if(j===i && i!==q.answerIndex) b.classList.add("wrong"); });
@@ -626,18 +503,8 @@ window.choose = (i)=>{
   if(ok) correct++; else wrong++; $("good").textContent = correct; $("bad").textContent = wrong;
   recordResult(q, ok, i);
 };
-$("prevBtn").onclick=()=>{ if(idx>0){ idx--; renderQuiz(); } };
-$("nextBtn").onclick=()=>{ const total=filteredIdxs.length; if(idx<total-1){ idx++; renderQuiz(); } else { alert(`끝! 정답 ${correct}, 오답 ${wrong}`); } };
 
 /* 리뷰 */
-$("revApply").onclick=()=>renderReview();
-$("exportWrong").onclick=()=>exportByState("wrong");
-$("exportCorrect").onclick=()=>exportByState("correct");
-$("exportWrongSet").onclick=()=>exportSet("wrong");
-$("exportCorrectSet").onclick=()=>exportSet("correct");
-$("clearWrongSet").onclick=()=>{ if(confirm("오답노트를 모두 비울까요?")){ wrongSet={}; refreshNoteBadge(); saveCloud(); alert("오답노트 초기화 완료"); } };
-$("clearCorrectSet").onclick=()=>{ if(confirm("정답노트를 모두 비울까요?")){ correctSet={}; refreshNoteBadge(); saveCloud(); alert("정답노트 초기화 완료"); } };
-
 function renderReview(){
   const s = $("revSubject").value, u = $("revUnit").value, st = $("revState").value;
   const rows = data.filter(q=> (s==="(전체)"||q.subject===s) && (u==="(전체)"||q.unit===u))
@@ -659,99 +526,7 @@ function exportSet(which){
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = which+"_note_accumulated.json"; a.click();
 }
 
-/* 대량 가져오기 */
-$("runImport").onclick=async()=>{
-  if(!user){ alert("로그인 후 이용해줘!"); return; }
-  const fq = $("impQ").files[0], fa = $("impA").files[0], fe = $("impE").files[0];
-  if(!fq || !fa){ alert("문제 파일과 정답 파일은 필수!"); return; }
-  const [tq, ta, te] = await Promise.all([fq.text(), fa.text(), fe?fe.text():Promise.resolve("")]);
-  const qLines = tq.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  const aLines = ta.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  const eLines = te.split(/\r?\n/).map(s=>s.trim());
-  const N = Math.min(qLines.length, aLines.length);
-  let added=0;
-  for(let i=0;i<N;i++){
-    const parts = qLines[i].split("|").map(s=>s.trim());
-    const subject = parts[0]||"미지정";
-    const unit = parts[1]||"일반";
-    const question = parts[2]||"";
-    const choices = parts.slice(3).filter(Boolean);
-    const ansIdx = parseInt(aLines[i],10) - 1;
-    const explanation = eLines[i]||"";
-    if(!question || choices.length<2 || isNaN(ansIdx) || ansIdx<0 || ansIdx>=choices.length){ continue; }
-    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
-    added++;
-  }
-  buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
-  alert(`가져오기 완료: ${added}문항 추가`);
-};
-
-
-
-
-
-$("runCSV").onclick=async()=>{
-  if(!user){ alert("로그인 후 이용해줘!"); return; }
-  const f = $("impCSV").files[0]; if(!f){ alert("CSV 파일을 선택해줘!"); return; }
-  const txt = await f.text(); const rows = parseCSV(txt); if(rows.length < 2){ alert("CSV에 데이터가 없어요."); return; }
-
-  const header = rows[0].map(h=>h.trim()); const col = name => header.indexOf(name);
-  const idxSub = col("과목"), idxUnit = col("단원"), idxQ = col("문제"),
-        idxC1 = col("보기1"), idxC2 = col("보기2"), idxC3 = col("보기3"),
-        idxC4 = col("보기4"), idxC5 = col("보기5"),
-        idxAns = col("답"), idxExp = col("해설");
-
-  const need = [idxSub, idxUnit, idxQ, idxC1, idxC2, idxAns];
-  if(need.some(i=>i<0)){ alert("필수 헤더(과목, 단원, 문제, 보기1, 보기2, 답)가 필요해요."); return; }
-
-  let added=0;
-  let errors=[];
-  for(let r=1; r<rows.length; r++){
-    const row = rows[r]; 
-    if(row.length===1 && !(row[0]||"").trim()) continue;
-
-    const subject=(row[idxSub]||"미지정").trim(),
-          unit=(row[idxUnit]||"일반").trim(),
-          question=(row[idxQ]||"").trim();
-
-    const choices=[idxC1,idxC2,idxC3,idxC4,idxC5]
-      .filter(i=>i>=0)
-      .map(i=>(row[i]||"").trim())
-      .filter(Boolean);
-
-    const ansIdx=parseInt((row[idxAns]||"").trim(),10)-1;
-    const explanation=idxExp>=0?(row[idxExp]||"").trim():"";
-
-    if(!question){
-      errors.push({line:r+1, reason:"문제 없음"}); continue;
-    }
-    if(choices.length<2){
-      errors.push({line:r+1, reason:"보기 2개 미만"}); continue;
-    }
-    if(isNaN(ansIdx)){
-      errors.push({line:r+1, reason:"정답 번호 없음/숫자 아님"}); continue;
-    }
-    if(ansIdx<0 || ansIdx>=choices.length){
-      errors.push({line:r+1, reason:"정답 번호 범위 오류"}); continue;
-    }
-
-    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
-    added++;
-  }
-
-  buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
-
-  let msg=`CSV 가져오기 완료: ${added}문항 추가`;
-  if(errors.length){
-    msg+=`\n오류 ${errors.length}건:\n`+errors.map(e=>`줄 ${e.line}: ${e.reason}`).join("\n");
-  }
-  alert(msg);
-};
-
-
-
-
-
+/* CSV 파서 */
 function parseCSV(text){
   const sep = text.includes("\t") ? "\t" : ","; 
   const rows=[]; let cur=[], field="", inQuotes=false;
@@ -773,12 +548,208 @@ function parseCSV(text){
   return rows.filter(r=> r.length>1 || (r[0] && r[0].trim()));
 }
 
+/* ======== 3) DOM 준비되면 한 번에 이벤트 연결 ======== */
+document.addEventListener("DOMContentLoaded", ()=>{
+  // 인증 버튼
+  $("loginBtn").onclick = async () => {
+    try{ await signInWithPopup(auth, new GoogleAuthProvider()); }
+    catch(e){ alert("로그인 실패: " + (e?.message || e)); }
+  };
+  $("logoutBtn").onclick = ()=> signOut(auth);
 
+  // 탭
+  $("tabBuild").onclick = ()=>show("build");
+  $("tabQuiz").onclick  = ()=>{ show("quiz"); prepareFiltered(); startQuiz(); };
+  $("tabReview").onclick= ()=>show("review");
+  $("tabImport").onclick= ()=>show("import");
 
+  // 빌더
+  $("clearBtn").onclick=()=>["subject","unit","question","c1","c2","c3","c4","c5","explain"].forEach(id=>$(id).value="");
+  $("addBtn").onclick=()=>{
+    if(!user){ alert("로그인 후 이용해줘!"); return; }
+    const subject = $("subject").value.trim()||"미지정";
+    const unit = $("unit").value.trim()||"일반";
+    const question = $("question").value.trim();
+    const choices = ["c1","c2","c3","c4","c5"].map(id=>($(id).value||"").trim()).filter(v=>v);
+    const ai = parseInt($("answerIndex").value,10)-1;
+    const explanation = $("explain").value.trim();
+    if(!question || choices.length<2 || isNaN(ai) || ai<0 || ai>=choices.length){
+      alert("문항/보기(2개 이상)/정답 번호를 확인해줘."); return;
+    }
+    data.push({ id: genId(), subject, unit, question, choices, answerIndex: ai, explanation });
+    buildPrepareFiltered(); renderList(); refreshAllFilters();
+    $("clearBtn").click();
+    saveCloud();
+  };
 
+  $("saveBtn").onclick=()=>{
+    const blob = new Blob([JSON.stringify({data,attempts,wrongSet,correctSet}, null, 2)], {type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "cbt_backup.json";
+    a.click();
+  };
+  $("loadBtn").onclick=()=>$("file").click();
+  $("file").onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    f.text().then(t=>{
+      try{
+        const incoming = JSON.parse(t);
+        const arr = Array.isArray(incoming) ? incoming : incoming.data;
+        if(!Array.isArray(arr)) throw new Error("JSON 형식이 문항 배열이 아님");
+        arr.forEach(q=>{ q.id = genId(); });
+        data = data.concat(arr);
+        buildPrepareFiltered(); renderList(); refreshAllFilters(); refreshNoteBadge();
+        saveCloud();
+        alert("불러오기 완료!");
+      }catch(err){ alert("JSON 형식 오류: "+err.message); }
+    });
+  };
 
+  $("startBtn").onclick=()=>{ if(data.length===0){ alert("문제가 없음!"); return; } prepareFiltered(); startQuiz(); show("quiz"); };
+  $("backToBuild").onclick=()=>show("build");
 
+  // 빌더 필터/선택/삭제
+  $("buildApplyFilter").onclick = ()=>{ buildSelected.clear(); buildPrepareFiltered(); renderList(); };
+  $("buildClearFilter").onclick = ()=>{
+    if($("buildFilterSubject")) $("buildFilterSubject").selectedIndex = 0;
+    updateUnitOptions("buildFilterSubject","buildFilterUnit");
+    if($("buildFilterUnit")) $("buildFilterUnit").selectedIndex = 0;
+    buildSelected.clear(); buildPrepareFiltered(); renderList();
+  };
+  $("buildSelectAll").onclick   = ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ ch.checked = true; buildSelected.add(parseInt(ch.getAttribute("data-id"),10)); }); };
+  $("buildSelectNone").onclick  = ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ ch.checked = false; buildSelected.delete(parseInt(ch.getAttribute("data-id"),10)); }); };
+  $("buildSelectInvert").onclick= ()=>{ const checks=$("listBox").querySelectorAll(".sel"); checks.forEach(ch=>{ const id=parseInt(ch.getAttribute("data-id"),10); const now=!ch.checked; ch.checked=now; if(now) buildSelected.add(id); else buildSelected.delete(id); }); };
+  $("buildDeleteSelected").onclick = ()=>{
+    const ids = Array.from(buildSelected);
+    if(ids.length===0){ alert("선택된 문제가 없어!"); return; }
+    if(!confirm(`${ids.length}문항을 삭제할까요? (되돌릴 수 없음)`)) return;
+    const remove = new Set(ids);
+    data = data.filter(q=>!remove.has(q.id));
+    ids.forEach(id=>{ if(attempts[id]) delete attempts[id]; delete wrongSet[id]; delete correctSet[id]; });
+    buildSelected.clear(); refreshAllFilters(); buildPrepareFiltered(); renderList(); refreshNoteBadge();
+    saveCloud();
+  };
+
+  // 퀴즈 필터/버튼
+  ["onlyWrong","onlyCorrect"].forEach(id=>{ const el=$(id); if(el){ el.onchange = ()=>{ prepareFiltered(); startQuiz(); }; }});
+  $("applyFilter").onclick=()=>{ prepareFiltered(); startQuiz(); };
+  $("clearFilter").onclick = () => {
+    $("filterSubject").selectedIndex = 0; updateUnitOptions("filterSubject","filterUnit");
+    $("filterUnit").selectedIndex = 0;
+    if($("onlyWrong")) $("onlyWrong").checked = false;
+    if($("onlyCorrect")) $("onlyCorrect").checked = false;
+    prepareFiltered(); startQuiz();
+  };
+  $("prevBtn").onclick=()=>{ if(idx>0){ idx--; renderQuiz(); } };
+  $("nextBtn").onclick=()=>{ const total=filteredIdxs.length; if(idx<total-1){ idx++; renderQuiz(); } else { alert(`끝! 정답 ${correct}, 오답 ${wrong}`); } };
+
+  // 리뷰
+  $("revApply").onclick=()=>renderReview();
+  $("exportWrong").onclick=()=>exportByState("wrong");
+  $("exportCorrect").onclick=()=>exportByState("correct");
+  $("exportWrongSet").onclick=()=>exportSet("wrong");
+  $("exportCorrectSet").onclick=()=>exportSet("correct");
+  $("clearWrongSet").onclick=()=>{ if(confirm("오답노트를 모두 비울까요?")){ wrongSet={}; refreshNoteBadge(); saveCloud(); alert("오답노트 초기화 완료"); } };
+  $("clearCorrectSet").onclick=()=>{ if(confirm("정답노트를 모두 비울까요?")){ correctSet={}; refreshNoteBadge(); saveCloud(); alert("정답노트 초기화 완료"); } };
+
+  // 대량 가져오기 (3파일)
+  $("runImport").onclick=async()=>{
+    if(!user){ alert("로그인 후 이용해줘!"); return; }
+    const fq = $("impQ").files[0], fa = $("impA").files[0], fe = $("impE").files[0];
+    if(!fq || !fa){ alert("문제 파일과 정답 파일은 필수!"); return; }
+    const [tq, ta, te] = await Promise.all([fq.text(), fa.text(), fe?fe.text():Promise.resolve("")]);
+    const qLines = tq.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const aLines = ta.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const eLines = te.split(/\r?\n/).map(s=>s.trim());
+    const N = Math.min(qLines.length, aLines.length);
+    let added=0;
+    for(let i=0;i<N;i++){
+      const parts = qLines[i].split("|").map(s=>s.trim());
+      const subject = parts[0]||"미지정";
+      const unit = parts[1]||"일반";
+      const question = parts[2]||"";
+      const choices = parts.slice(3).filter(Boolean);
+      const ansIdx = parseInt(aLines[i],10) - 1;
+      const explanation = eLines[i]||"";
+      if(!question || choices.length<2 || isNaN(ansIdx) || ansIdx<0 || ansIdx>=choices.length){ continue; }
+      data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
+      added++;
+    }
+    buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
+    alert(`가져오기 완료: ${added}문항 추가`);
+  };
+
+  // CSV 한 파일
+  $("runCSV").onclick=async()=>{
+    if(!user){ alert("로그인 후 이용해줘!"); return; }
+    const f = $("impCSV").files[0]; if(!f){ alert("CSV 파일을 선택해줘!"); return; }
+    const txt = await f.text(); const rows = parseCSV(txt); if(rows.length < 2){ alert("CSV에 데이터가 없어요."); return; }
+
+    const header = rows[0].map(h=>h.trim()); const col = name => header.indexOf(name);
+    const idxSub = col("과목"), idxUnit = col("단원"), idxQ = col("문제"),
+          idxC1 = col("보기1"), idxC2 = col("보기2"), idxC3 = col("보기3"),
+          idxC4 = col("보기4"), idxC5 = col("보기5"),
+          idxAns = col("답"), idxExp = col("해설");
+
+    const need = [idxSub, idxUnit, idxQ, idxC1, idxC2, idxAns];
+    if(need.some(i=>i<0)){ alert("필수 헤더(과목, 단원, 문제, 보기1, 보기2, 답)가 필요해요."); return; }
+
+    let added=0;
+    let errors=[];
+    for(let r=1; r<rows.length; r++){
+      const row = rows[r]; 
+      if(row.length===1 && !(row[0]||"").trim()) continue;
+
+      const subject=(row[idxSub]||"미지정").trim(),
+            unit=(row[idxUnit]||"일반").trim(),
+            question=(row[idxQ]||"").trim();
+
+      const choices=[idxC1,idxC2,idxC3,idxC4,idxC5]
+        .filter(i=>i>=0)
+        .map(i=>(row[i]||"").trim())
+        .filter(Boolean);
+
+      const ansIdx=parseInt((row[idxAns]||"").trim(),10)-1;
+      const explanation=idxExp>=0?(row[idxExp]||"").trim():"";
+
+      if(!question){ errors.push({line:r+1, reason:"문제 없음"}); continue; }
+      if(choices.length<2){ errors.push({line:r+1, reason:"보기 2개 미만"}); continue; }
+      if(isNaN(ansIdx)){ errors.push({line:r+1, reason:"정답 번호 없음/숫자 아님"}); continue; }
+      if(ansIdx<0 || ansIdx>=choices.length){ errors.push({line:r+1, reason:"정답 번호 범위 오류"}); continue; }
+
+      data.push({ id: genId(), subject, unit, question, choices, answerIndex: ansIdx, explanation });
+      added++;
+    }
+
+    buildPrepareFiltered(); renderList(); refreshAllFilters(); saveCloud();
+
+    let msg=`CSV 가져오기 완료: ${added}문항 추가`;
+    if(errors.length){
+      msg+=`\n오류 ${errors.length}건:\n`+errors.map(e=>`줄 ${e.line}: ${e.reason}`).join("\n");
+    }
+    alert(msg);
+  };
+
+  // 인증 상태 변화(화면 요소가 준비된 뒤에 연결)
+  onAuthStateChanged(auth, async (u)=>{
+    user = u || null;
+    if(user){
+      $("loginBtn").classList.add("hidden");
+      $("logoutBtn").classList.remove("hidden");
+      $("whoAmI").textContent = user.email || user.displayName || user.uid;
+      await loadCloud();
+      initAfterDataLoad();
+    }else{
+      $("loginBtn").classList.remove("hidden");
+      $("logoutBtn").classList.add("hidden");
+      $("whoAmI").textContent = "";
+      disableAppUntilLogin(true);
+    }
+  });
+});
 </script>
+
 
 </body>
 </html>
