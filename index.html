@@ -563,6 +563,14 @@ document.addEventListener("DOMContentLoaded", ()=>{
   $("tabReview").onclick= ()=>show("review");
   $("tabImport").onclick= ()=>show("import");
 
+
+
+$("filterSubject").onchange = ()=> updateUnitOptions("filterSubject","filterUnit");
+$("revSubject").onchange   = ()=> updateUnitOptions("revSubject","revUnit");
+$("buildFilterSubject").onchange = ()=> updateUnitOptions("buildFilterSubject","buildFilterUnit");
+
+
+
   // 빌더
   $("clearBtn").onclick=()=>["subject","unit","question","c1","c2","c3","c4","c5","explain"].forEach(id=>$(id).value="");
   $("addBtn").onclick=()=>{
