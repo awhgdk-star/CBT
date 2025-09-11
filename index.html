@@ -457,7 +457,8 @@ function renderQuiz(){
   if(total===0){ $("qtext").textContent="해당 필터에 문제가 없어요."; $("choices").innerHTML=""; $("exp").textContent=""; return; }
   const q = data[filteredIdxs[idx]];
   $("subjectNow").textContent = `${q.subject} / ${q.unit}`;
-  $("qtext").textContent = q.id+". "+q.question;
+$("qtext").innerHTML = q.id + ". " + (q.question ? q.question.replace(/\r?\n|\\n/g, "<br>") : "");
+
   $("exp").textContent = "";
   $("choices").innerHTML = q.choices.map((c,i)=>`<button onclick="choose(${i})">${i+1}. ${c}</button>`).join("");
   $("prevBtn").disabled = idx===0;
@@ -476,7 +477,8 @@ function renderQuizAll(){
     const buttons = q.choices.map((c,i)=>`<button onclick="chooseAll(${k}, ${i})">${i+1}. ${c}</button>`).join("");
     return `<div class="item" id="qblock_${k}">
       <div class="meta">#${q.id} · ${q.subject} / ${q.unit}</div>
-      <div style="font-weight:600;margin:6px 0">${q.question}</div>
+<div style="font-weight:600;margin:6px 0">${(q.question||"").replace(/\r?\n|\\n/g,"<br>")}</div>
+
       <div class="choices" id="choices_all_${k}">${buttons}</div>
       <p class="meta" id="exp_all_${k}" style="margin-top:6px"></p>
     </div>`;
@@ -496,7 +498,8 @@ window.chooseAll = (k, i)=>{
   if(Array.from(choicesBox.children).some(b=>b.disabled)) return;
   Array.from(choicesBox.children).forEach((b,j)=>{ b.disabled=true; if(j===q.answerIndex) b.classList.add("correct"); if(j===i && i!==q.answerIndex) b.classList.add("wrong"); });
   const ok = (i===q.answerIndex);
-document.getElementById("exp_all_"+k).innerHTML = (ok ? "정답! " : "오답. 정답은 " + (q.answerIndex+1) + "번. ") + (q.explanation ? q.explanation.replace(/\n/g, "<br>") : "");
+document.getElementById("exp_all_"+k).innerHTML = (ok ? "정답! " : "오답. 정답은 " + (q.answerIndex+1) + "번. ") + (q.explanation ? q.explanation.replace(/\r?\n|\\n/g, "<br>") : "");
+
 
   if(ok) correct++; else wrong++; $("good").textContent = correct; $("bad").textContent = wrong;
   recordResult(q, ok, i);
@@ -505,7 +508,8 @@ window.choose = (i)=>{
   const q = data[filteredIdxs[idx]];
   [...$("choices").children].forEach((b,j)=>{ b.disabled=true; if(j===q.answerIndex) b.classList.add("correct"); if(j===i && i!==q.answerIndex) b.classList.add("wrong"); });
   const ok = (i===q.answerIndex);
-$("exp").innerHTML = (ok ? "정답! " : "오답. 정답은 " + (q.answerIndex+1) + "번. ") + (q.explanation ? q.explanation.replace(/\n/g, "<br>") : "");
+$("exp").innerHTML = (ok ? "정답! " : "오답. 정답은 " + (q.answerIndex+1) + "번. ") + (q.explanation ? q.explanation.replace(/\r?\n|\\n/g, "<br>") : "");
+
 
   if(ok) correct++; else wrong++; $("good").textContent = correct; $("bad").textContent = wrong;
   recordResult(q, ok, i);
