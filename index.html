@@ -556,7 +556,10 @@ function parseCSV(text){
     }
   }
   cur.push(field); rows.push(cur);
-  return rows.filter(r=> r.length>1 || (r[0] && r[0].trim()));
+return rows
+  .filter(r=> r.length>1 || (r[0] && r[0].trim()))
+  .map(r => r.map(f => f.replace(/\\n/g, "\n")));
+
 }
 
 /* ======== 3) DOM 준비되면 한 번에 이벤트 연결 ======== */
