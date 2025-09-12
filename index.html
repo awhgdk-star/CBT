@@ -539,28 +539,38 @@ function exportSet(which){
 
 /* CSV 파서 */
 function parseCSV(text){
-  const sep = text.includes("\t") ? "\t" : ","; 
-  const rows=[]; let cur=[], field="", inQuotes=false;
-  for(let i=0;i<text.length;i++){
-    const ch=text[i];
-    if(inQuotes){
-      if(ch === '"'){
-        if(text[i+1] === '"'){ field+='"'; i++; } 
-        else { inQuotes=false; }
-      } else { field += ch; }
-    }else{
-      if(ch === '"'){ inQuotes=true; }
-      else if(ch === sep){ cur.push(field); field=""; }
-      else if(ch === "\n"){ cur.push(field); rows.push(cur); cur=[]; field=""; }
-      else if(ch !== "\r"){ field += ch; }
+  const rows = [];
+  let cur = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i+1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        field += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === "," ) {
+        cur.push(field); field = "";
+      } else if (ch === "\n") {
+        cur.push(field); rows.push(cur); cur = []; field = "";
+      } else if (ch !== "\r") {
+        field += ch;
+      }
     }
   }
   cur.push(field); rows.push(cur);
-return rows
-  .filter(r=> r.length>1 || (r[0] && r[0].trim()))
-  .map(r => r.map(f => f.replace(/\\n/g, "\n")));
 
+  // 따옴표 제거 & \n 처리
+  return rows
+    .filter(r => r.length > 1 || (r[0] && r[0].trim()))
+    .map(r => r.map(f => f.replace(/\\n/g, "\n")));
 }
+
+
 
 /* ======== 3) DOM 준비되면 한 번에 이벤트 연결 ======== */
 document.addEventListener("DOMContentLoaded", ()=>{
