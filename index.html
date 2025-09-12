@@ -539,52 +539,25 @@ function exportSet(which){
 
 /* CSV 파서 */
 function parseCSV(text){
-  // 구분자 감지
-  const sep = text.includes("\t") ? "\t" : ",";
-
-  const rows = [];
-  let cur = [], field = "", inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }   // 이스케이프된 큰따옴표 ""
-        else { inQuotes = false; }                         // 따옴표 닫힘
-      } else {
-        field += ch;                                       // 따옴표 내부 내용 그대로
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;                                   // 따옴표 시작
-      } else if (ch === sep) {
-        cur.push(field); field = "";
-      } else if (ch === "\n") {
-        cur.push(field); rows.push(cur); cur = []; field = "";
-      } else if (ch !== "\r") {
-        field += ch;
-      }
+  const sep = text.includes("\t") ? "\t" : ","; 
+  const rows=[]; let cur=[], field="", inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(inQuotes){
+      if(ch === '"'){
+        if(text[i+1] === '"'){ field+='"'; i++; } 
+        else { inQuotes=false; }
+      } else { field += ch; }
+    }else{
+      if(ch === '"'){ inQuotes=true; }
+      else if(ch === sep){ cur.push(field); field=""; }
+      else if(ch === "\n"){ cur.push(field); rows.push(cur); cur=[]; field=""; }
+      else if(ch !== "\r"){ field += ch; }
     }
   }
   cur.push(field); rows.push(cur);
-
-  // 후처리:
-  // - 공백/제로폭/BOM 제거
-  // - 리터럴 "\n" → 실제 줄바꿈으로
-  // - 필드 내부의 "" → " (위 루프에서 처리했지만 이중안전)
-  const cleanup = s =>
-    (s ?? "")
-      .replace(/^\uFEFF/, "")           // BOM
-      .replace(/\u200B/g, "")           // zero-width space
-      .replace(/\\n/g, "\n")            // 리터럴 \n → 실제 개행
-      .trim();
-
-  return rows
-    .filter(r => r.length > 1 || (r[0] && r[0].trim()))
-    .map(r => r.map(cleanup));
+  return rows.filter(r=> r.length>1 || (r[0] && r[0].trim()));
 }
-
 
 /* ======== 3) DOM 준비되면 한 번에 이벤트 연결 ======== */
 document.addEventListener("DOMContentLoaded", ()=>{
